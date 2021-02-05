@@ -1,0 +1,23 @@
+package store
+
+import "fmt"
+
+type errorType string
+
+func (e errorType) Error() string {
+	return string(e)
+}
+
+// ErrOutOfBounds indicates the bucket index was greater than the number of bucks
+const ErrOutOfBounds = errorType("Buckets out of bound error")
+
+// ErrIndexTooLarge indicates the maximum supported bucket size is 32-bits
+const ErrIndexTooLarge = errorType("Index size cannot be more than 32-bits")
+
+const ErrKeyTooShort = errorType("Key must be at least 4 bytes long")
+
+type ErrIndexWrongBitSize [2]byte
+
+func (e ErrIndexWrongBitSize) Error() string {
+	return fmt.Sprintf("Index bit size for buckets is %d, expected %d", e[0], e[1])
+}
