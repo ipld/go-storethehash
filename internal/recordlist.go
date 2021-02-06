@@ -50,6 +50,11 @@ func NewRecordList(data []byte) RecordList {
 	return RecordList(data[BucketPrefixSize:])
 }
 
+// NewRecordList returns an iterable RecordList from the given byte array
+func NewRecordListRaw(data []byte) RecordList {
+	return RecordList(data)
+}
+
 // FindKeyPosition return the position where a key would be added.
 //
 // Returns the position together with the previous record.

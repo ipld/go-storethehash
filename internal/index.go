@@ -65,15 +65,20 @@ func FromBytes(bytes []byte) Header {
 }
 
 type Index struct {
-	sizeBits    uint8
-	buckets     Buckets
-	sizeBuckets SizeBuckets
-	reader      *os.File
-	writer      *bufio.Writer
-	Primary     PrimaryStorage
-	bucketLk    sync.RWMutex
-	length      Position
+	sizeBits          uint8
+	buckets           Buckets
+	sizeBuckets       SizeBuckets
+	reader            *os.File
+	writer            *os.File
+	Primary           PrimaryStorage
+	bucketLk          sync.RWMutex
+	curPool, nextPool bucketPool
+	length            Position
 }
+
+type bucketPool map[BucketIndex][]byte
+
+const BucketPoolSize = 128
 
 // Open and index.
 //
@@ -88,6 +93,7 @@ func OpenIndex(path string, primary PrimaryStorage, indexSizeBits uint8) (*Index
 		header := FromHeader(NewHeader(indexSizeBits))
 		headerSize := make([]byte, 4)
 		binary.LittleEndian.PutUint32(headerSize, uint32(len(header)))
+
 		file, err = openFileRandom(path, os.O_RDWR|os.O_APPEND|os.O_EXCL|os.O_CREATE)
 		if err != nil {
 			return nil, err
@@ -101,6 +107,7 @@ func OpenIndex(path string, primary PrimaryStorage, indexSizeBits uint8) (*Index
 		if err := file.Sync(); err != nil {
 			return nil, err
 		}
+		length = Position(len(header) + len(headerSize))
 		buckets, err = NewBuckets(indexSizeBits)
 		if err != nil {
 			return nil, err
@@ -117,7 +124,7 @@ func OpenIndex(path string, primary PrimaryStorage, indexSizeBits uint8) (*Index
 		if err != nil {
 			return nil, err
 		}
-		file, err = openFileRandom(path, os.O_RDWR|os.O_APPEND|os.O_EXCL|os.O_CREATE)
+		file, err = openFileRandom(path, os.O_RDWR|os.O_APPEND|os.O_EXCL)
 		if err != nil {
 			return nil, err
 		}
@@ -128,9 +135,11 @@ func OpenIndex(path string, primary PrimaryStorage, indexSizeBits uint8) (*Index
 		buckets,
 		sizeBuckets,
 		file,
-		bufio.NewWriter(file),
+		file,
 		primary,
 		sync.RWMutex{},
+		make(bucketPool, BucketPoolSize),
+		make(bucketPool, BucketPoolSize),
 		length,
 	}, nil
 }
@@ -194,9 +203,11 @@ func (i *Index) Put(key []byte, location Block) error {
 	prefix := BucketIndex(binary.LittleEndian.Uint32(key))
 	var leadingBits BucketIndex = (1 << i.sizeBits) - 1
 	bucket := prefix & leadingBits
+	i.bucketLk.Lock()
+	defer i.bucketLk.Unlock()
 
 	// Get the index file offset of the record list the key is in.
-	indexOffset, recordListSize, err := i.readBuckets(bucket)
+	records, err := i.readBuckets(bucket)
 	if err != nil {
 		return err
 	}
@@ -206,19 +217,13 @@ func (i *Index) Put(key []byte, location Block) error {
 
 	// No records stored in that bucket yet
 	var newData []byte
-	if indexOffset == 0 {
+	if records == nil {
 		// As it's the first key a single byte is enough as it doesn't need to be distinguised
 		// from other keys.
 		trimmedIndexKey := indexKey[:1]
 		newData = EncodeKeyPosition(KeyPositionPair{trimmedIndexKey, location})
 	} else {
 		// Read the record list from disk and insert the new key
-		data := make([]byte, recordListSize)
-		_, err := i.reader.ReadAt(data, int64(indexOffset))
-		if err != nil {
-			return err
-		}
-		records := NewRecordList(data)
 		pos, prevRecord, has := records.FindKeyPosition(indexKey)
 
 		if has && bytes.HasPrefix(indexKey, prevRecord.Key) {
@@ -239,8 +244,8 @@ func (i *Index) Put(key []byte, location Block) error {
 				return nil
 			}
 
-			trimmedPrevKey := prevKey[:keyTrimPos]
-			trimmedIndexKey := indexKey[:keyTrimPos]
+			trimmedPrevKey := prevKey[:keyTrimPos+1]
+			trimmedIndexKey := indexKey[:keyTrimPos+1]
 			var keys []KeyPositionPair
 
 			// Replace the existing previous key (which is too short) with a new one and
@@ -288,32 +293,33 @@ func (i *Index) Put(key []byte, location Block) error {
 			)
 
 			// We cannot trim beyond the key length
-			keyTrimPos := min(minPrefix, len(indexKey))
+			keyTrimPos := min(minPrefix, len(indexKey)-1)
 
-			trimmedIndexKey := indexKey[:keyTrimPos]
+			trimmedIndexKey := indexKey[:keyTrimPos+1]
 			newData = records.PutKeys([]KeyPositionPair{{trimmedIndexKey, location}}, pos, pos)
 		}
 	}
-	return i.replaceBucket(bucket, newData)
+	i.nextPool[bucket] = newData
+	return nil
 }
 
-func (i *Index) replaceBucket(bucket BucketIndex, newData []byte) error {
+func (i *Index) flushBucket(bucket BucketIndex, newData []byte) (Block, error) {
 	// Write new data to disk. The record list is prefixed with bucket they are in. This is
 	// needed in order to reconstruct the in-memory buckets from the index itself.
 	// TODO vmx 2020-11-25: This should be an error and not a panic
 	newDataSize := make([]byte, SizePrefixSize)
 	binary.LittleEndian.PutUint32(newDataSize, uint32(len(newData))+uint32(BucketPrefixSize))
 	if _, err := i.writer.Write(newDataSize); err != nil {
-		return err
+		return Block{}, err
 	}
 
 	bucketPrefixBuffer := make([]byte, BucketPrefixSize)
 	binary.LittleEndian.PutUint32(bucketPrefixBuffer, uint32(bucket))
 	if _, err := i.writer.Write(bucketPrefixBuffer); err != nil {
-		return err
+		return Block{}, err
 	}
 	if _, err := i.writer.Write(newData); err != nil {
-		return err
+		return Block{}, err
 	}
 	length := i.length
 	i.length += Position(len(newData) + BucketPrefixSize + SizePrefixSize)
@@ -321,33 +327,78 @@ func (i *Index) replaceBucket(bucket BucketIndex, newData []byte) error {
 	//self.file.syncData()?;
 
 	// Keep the reference to the stored data in the bucket
-	return i.writeBuckets(bucket, length+Position(SizePrefixSize), Size(len(newData)+BucketPrefixSize))
+	return Block{length + Position(SizePrefixSize), Size(len(newData) + BucketPrefixSize)}, nil
 }
 
-func (i *Index) writeBuckets(bucket BucketIndex, pos Position, size Size) error {
+type bucketBlock struct {
+	bucket BucketIndex
+	blk    Block
+}
+
+func (i *Index) commit() error {
+	i.bucketLk.Lock()
+	nextPool := i.curPool
+	i.curPool = i.nextPool
+	i.nextPool = nextPool
+	i.bucketLk.Unlock()
+	if len(i.curPool) == 0 {
+		return nil
+	}
+	blks := make([]bucketBlock, 0, len(i.curPool))
+	for bucket, data := range i.curPool {
+		blk, err := i.flushBucket(bucket, data)
+		if err != nil {
+			return err
+		}
+		blks = append(blks, bucketBlock{bucket, blk})
+	}
 	i.bucketLk.Lock()
 	defer i.bucketLk.Unlock()
-	if err := i.buckets.Put(bucket, pos); err != nil {
-		return err
+	i.curPool = make(bucketPool, BucketPoolSize)
+	for _, blk := range blks {
+		bucket := blk.bucket
+		pos := blk.blk.Offset
+		size := blk.blk.Size
+		if err := i.buckets.Put(bucket, pos); err != nil {
+			return err
+		}
+		if err := i.sizeBuckets.Put(bucket, size); err != nil {
+			return err
+		}
 	}
-	if err := i.sizeBuckets.Put(bucket, size); err != nil {
-		return err
-	}
+
 	return nil
 }
 
-func (i *Index) readBuckets(bucket BucketIndex) (Position, Size, error) {
-	i.bucketLk.RLock()
-	defer i.bucketLk.RUnlock()
+func (i *Index) readBuckets(bucket BucketIndex) (RecordList, error) {
+	data, ok := i.curPool[bucket]
+	if ok {
+		return NewRecordListRaw(data), nil
+	}
+	data, ok = i.nextPool[bucket]
+	if ok {
+		return NewRecordListRaw(data), nil
+	}
 	indexOffset, err := i.buckets.Get(bucket)
 	if err != nil {
-		return 0, 0, err
+		return nil, err
 	}
 	recordListSize, err := i.sizeBuckets.Get(bucket)
 	if err != nil {
-		return 0, 0, err
+		return nil, err
 	}
-	return indexOffset, recordListSize, nil
+
+	if indexOffset == 0 {
+		return nil, nil
+	}
+	// Read the record list from disk and get the file offset of that key in the primary
+	// storage.
+	data = make([]byte, recordListSize)
+	_, err = i.reader.ReadAt(data, int64(indexOffset))
+	if err != nil {
+		return nil, err
+	}
+	return NewRecordList(data), nil
 }
 
 // Get the file offset in the primary storage of a key.
@@ -361,32 +412,26 @@ func (i *Index) Get(key []byte) (Block, bool, error) {
 	var leadingBits BucketIndex = (1 << i.sizeBits) - 1
 	bucket := prefix & leadingBits
 
-	indexOffset, recordListSize, err := i.readBuckets(bucket)
+	i.bucketLk.RLock()
+	records, err := i.readBuckets(bucket)
+	i.bucketLk.RUnlock()
 	if err != nil {
 		return Block{}, false, err
 	}
+	if records == nil {
+		return Block{}, false, nil
+	}
+
 	// The key doesn't need the prefix that was used to find the right bucket. For simplicty
 	// only full bytes are trimmed off.
 	indexKey := StripBucketPrefix(key, i.sizeBits)
-
-	if indexOffset == 0 {
-		return Block{}, false, nil
-	}
-	// Read the record list from disk and get the file offset of that key in the primary
-	// storage.
-	data := make([]byte, recordListSize)
-	_, err = i.reader.ReadAt(data, int64(indexOffset))
-	if err != nil {
-		return Block{}, false, err
-	}
-	records := NewRecordList(data)
 
 	fileOffset, found := records.Get(indexKey)
 	return fileOffset, found, nil
 }
 
 func (i *Index) Flush() error {
-	return i.writer.Flush()
+	return i.commit()
 }
 
 // An iterator over index entries.
