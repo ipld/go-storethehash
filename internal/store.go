@@ -46,8 +46,15 @@ func (s *Store) Get(key []byte) ([]byte, bool, error) {
 }
 
 func (s *Store) Put(key []byte, value []byte) error {
-	s.writeLk.Lock()
-	defer s.writeLk.Unlock()
+	has, err := s.Has(key)
+	if err != nil {
+		return err
+	}
+	// we assume that a second put should NOT write twice
+	// the reason is we are assuming the key is the immutable hash for the value
+	if has {
+		return nil
+	}
 	fileOffset, err := s.index.Primary.Put(key, value)
 	if err != nil {
 		return err

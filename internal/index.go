@@ -207,9 +207,18 @@ func (i *Index) Put(key []byte, location Block) error {
 	defer i.bucketLk.Unlock()
 
 	// Get the index file offset of the record list the key is in.
-	records, err := i.readBuckets(bucket)
+	cached, indexOffset, recordListSize, err := i.readBucketInfo(bucket)
 	if err != nil {
 		return err
+	}
+	var records RecordList
+	if cached != nil {
+		records = NewRecordListRaw(cached)
+	} else {
+		records, err = i.readDiskBuckets(bucket, indexOffset, recordListSize)
+		if err != nil {
+			return err
+		}
 	}
 	// The key doesn't need the prefix that was used to find the right bucket. For simplicty
 	// only full bytes are trimmed off.
@@ -370,31 +379,34 @@ func (i *Index) commit() error {
 	return nil
 }
 
-func (i *Index) readBuckets(bucket BucketIndex) (RecordList, error) {
+func (i *Index) readBucketInfo(bucket BucketIndex) ([]byte, Position, Size, error) {
 	data, ok := i.curPool[bucket]
 	if ok {
-		return NewRecordListRaw(data), nil
+		return data, 0, 0, nil
 	}
 	data, ok = i.nextPool[bucket]
 	if ok {
-		return NewRecordListRaw(data), nil
+		return data, 0, 0, nil
 	}
 	indexOffset, err := i.buckets.Get(bucket)
 	if err != nil {
-		return nil, err
+		return nil, 0, 0, err
 	}
 	recordListSize, err := i.sizeBuckets.Get(bucket)
 	if err != nil {
-		return nil, err
+		return nil, 0, 0, err
 	}
+	return nil, indexOffset, recordListSize, nil
+}
 
+func (i *Index) readDiskBuckets(bucket BucketIndex, indexOffset Position, recordListSize Size) (RecordList, error) {
 	if indexOffset == 0 {
 		return nil, nil
 	}
 	// Read the record list from disk and get the file offset of that key in the primary
 	// storage.
-	data = make([]byte, recordListSize)
-	_, err = i.reader.ReadAt(data, int64(indexOffset))
+	data := make([]byte, recordListSize)
+	_, err := i.reader.ReadAt(data, int64(indexOffset))
 	if err != nil {
 		return nil, err
 	}
@@ -413,10 +425,19 @@ func (i *Index) Get(key []byte) (Block, bool, error) {
 	bucket := prefix & leadingBits
 
 	i.bucketLk.RLock()
-	records, err := i.readBuckets(bucket)
+	cached, indexOffset, recordListSize, err := i.readBucketInfo(bucket)
 	i.bucketLk.RUnlock()
 	if err != nil {
 		return Block{}, false, err
+	}
+	var records RecordList
+	if cached != nil {
+		records = NewRecordListRaw(cached)
+	} else {
+		records, err = i.readDiskBuckets(bucket, indexOffset, recordListSize)
+		if err != nil {
+			return Block{}, false, err
+		}
 	}
 	if records == nil {
 		return Block{}, false, nil
