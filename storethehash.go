@@ -113,7 +113,12 @@ func (bs *HashedBlockstore) GetSize(c cid.Cid) (int, error) {
 
 // Put puts a given block to the underlying datastore
 func (bs *HashedBlockstore) Put(blk blocks.Block) error {
-	return bs.store.Put(blk.Cid().Bytes(), blk.RawData())
+	err := bs.store.Put(blk.Cid().Bytes(), blk.RawData())
+	// suppress key exist error because this is not expected behavior for a blockstore
+	if err == store.ErrKeyExists {
+		return nil
+	}
+	return err
 }
 
 // PutMany puts a slice of blocks at the same time using batching
@@ -121,7 +126,8 @@ func (bs *HashedBlockstore) Put(blk blocks.Block) error {
 func (bs *HashedBlockstore) PutMany(blks []blocks.Block) error {
 	for _, blk := range blks {
 		err := bs.store.Put(blk.Cid().Bytes(), blk.RawData())
-		if err != nil {
+		// suppress key exist error because this is not expected behavior for a blockstore
+		if err != nil && err != store.ErrKeyExists {
 			return err
 		}
 	}
