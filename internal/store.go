@@ -184,7 +184,7 @@ func (s *Store) Put(key []byte, value []byte) error {
 	elapsed := now.Sub(s.lastFlush)
 	work := s.index.OutstandingWork() + s.index.Primary.OutstandingWork() // TODO: move this calculation into Pool
 	rate := math.Ceil(float64(work) / elapsed.Seconds())
-	sleep := s.rate > 0 && rate > s.rate
+	sleep := s.rate > 0 && rate > s.rate && work > s.burstRate
 	s.rateLk.Unlock()
 
 	if sleep {
