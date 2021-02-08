@@ -46,7 +46,7 @@ func newBlockPool() blockPool {
 }
 
 func OpenCIDPrimary(path string) (*CIDPrimary, error) {
-	file, err := os.OpenFile(path, os.O_RDWR|os.O_APPEND|os.O_EXCL|os.O_CREATE, 0o644)
+	file, err := os.OpenFile(path, os.O_RDWR|os.O_APPEND|os.O_CREATE, 0o644)
 	if err != nil {
 		return nil, err
 	}

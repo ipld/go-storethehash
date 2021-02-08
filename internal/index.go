@@ -97,7 +97,7 @@ func OpenIndex(path string, primary PrimaryStorage, indexSizeBits uint8) (*Index
 		headerSize := make([]byte, 4)
 		binary.LittleEndian.PutUint32(headerSize, uint32(len(header)))
 
-		file, err = openFileRandom(path, os.O_RDWR|os.O_APPEND|os.O_EXCL|os.O_CREATE)
+		file, err = openFileRandom(path, os.O_RDWR|os.O_APPEND|os.O_CREATE)
 		if err != nil {
 			return nil, err
 		}
