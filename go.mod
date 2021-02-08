@@ -9,7 +9,6 @@ require (
 	github.com/ipfs/go-ipfs-blocksutil v0.0.1
 	github.com/ipfs/go-ipfs-util v0.0.2
 	github.com/ipld/go-car v0.1.0
-	github.com/jbenet/go-random v0.0.0-20190219211222-123a90aedc0c
 	github.com/multiformats/go-multihash v0.0.14
 	github.com/stretchr/testify v1.3.0
 )

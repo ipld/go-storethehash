@@ -34,8 +34,6 @@ func (b Buckets) Get(index BucketIndex) (Position, error) {
 	return b[int(index)], nil
 }
 
-type Size uint32
-
 // SizeBuckets contains sizes for all record lists
 //
 // The generic specifies how many bits are used to create the buckets. The number of buckets is

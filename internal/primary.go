@@ -1,13 +1,5 @@
 package store
 
-// Position indicates a position in a file
-type Position uint64
-
-type Block struct {
-	Offset Position
-	Size   Size
-}
-
 // PrimaryStorage is an interface for storing and retrieving key value pairs on disk
 type PrimaryStorage interface {
 	// Returns the key-value pair from the given position.
@@ -30,8 +22,11 @@ type PrimaryStorage interface {
 	// Note that this key might differ from the key that is actually stored.
 	GetIndexKey(blk Block) ([]byte, error)
 
-	Flush() error
+	Flush() (Work, error)
+	Sync() error
 
+	Close() error
+	OutstandingWork() Work
 	Iter() (PrimaryStorageIter, error)
 }
 

@@ -68,17 +68,20 @@ type Index struct {
 	sizeBits          uint8
 	buckets           Buckets
 	sizeBuckets       SizeBuckets
-	reader            *os.File
-	writer            *os.File
+	file              *os.File
+	writer            *bufio.Writer
 	Primary           PrimaryStorage
 	bucketLk          sync.RWMutex
+	outstandingWork   Work
 	curPool, nextPool bucketPool
 	length            Position
 }
 
+const indexBufferSize = 32 * 4096
+
 type bucketPool map[BucketIndex][]byte
 
-const BucketPoolSize = 128
+const BucketPoolSize = 1024
 
 // Open and index.
 //
@@ -135,9 +138,10 @@ func OpenIndex(path string, primary PrimaryStorage, indexSizeBits uint8) (*Index
 		buckets,
 		sizeBuckets,
 		file,
-		file,
+		bufio.NewWriterSize(file, indexBufferSize),
 		primary,
 		sync.RWMutex{},
+		0,
 		make(bucketPool, BucketPoolSize),
 		make(bucketPool, BucketPoolSize),
 		length,
@@ -308,35 +312,38 @@ func (i *Index) Put(key []byte, location Block) error {
 			newData = records.PutKeys([]KeyPositionPair{{trimmedIndexKey, location}}, pos, pos)
 		}
 	}
+	i.outstandingWork += Work(len(newData) + BucketPrefixSize + SizePrefixSize)
 	i.nextPool[bucket] = newData
 	return nil
 }
 
-func (i *Index) flushBucket(bucket BucketIndex, newData []byte) (Block, error) {
+func (i *Index) flushBucket(bucket BucketIndex, newData []byte) (Block, Work, error) {
 	// Write new data to disk. The record list is prefixed with bucket they are in. This is
 	// needed in order to reconstruct the in-memory buckets from the index itself.
 	// TODO vmx 2020-11-25: This should be an error and not a panic
 	newDataSize := make([]byte, SizePrefixSize)
 	binary.LittleEndian.PutUint32(newDataSize, uint32(len(newData))+uint32(BucketPrefixSize))
 	if _, err := i.writer.Write(newDataSize); err != nil {
-		return Block{}, err
+		return Block{}, 0, err
 	}
 
 	bucketPrefixBuffer := make([]byte, BucketPrefixSize)
 	binary.LittleEndian.PutUint32(bucketPrefixBuffer, uint32(bucket))
 	if _, err := i.writer.Write(bucketPrefixBuffer); err != nil {
-		return Block{}, err
+		return Block{}, 0, err
 	}
 	if _, err := i.writer.Write(newData); err != nil {
-		return Block{}, err
+		return Block{}, 0, err
 	}
 	length := i.length
-	i.length += Position(len(newData) + BucketPrefixSize + SizePrefixSize)
+	toWrite := Position(len(newData) + BucketPrefixSize + SizePrefixSize)
+	i.length += toWrite
 	// Fsyncs are expensive
 	//self.file.syncData()?;
 
 	// Keep the reference to the stored data in the bucket
-	return Block{length + Position(SizePrefixSize), Size(len(newData) + BucketPrefixSize)}, nil
+	return Block{length + Position(SizePrefixSize), Size(len(newData) + BucketPrefixSize)},
+		Work(toWrite), nil
 }
 
 type bucketBlock struct {
@@ -344,39 +351,41 @@ type bucketBlock struct {
 	blk    Block
 }
 
-func (i *Index) commit() error {
+func (i *Index) commit() (Work, error) {
 	i.bucketLk.Lock()
 	nextPool := i.curPool
 	i.curPool = i.nextPool
 	i.nextPool = nextPool
+	i.outstandingWork = 0
 	i.bucketLk.Unlock()
 	if len(i.curPool) == 0 {
-		return nil
+		return 0, nil
 	}
 	blks := make([]bucketBlock, 0, len(i.curPool))
+	var work Work
 	for bucket, data := range i.curPool {
-		blk, err := i.flushBucket(bucket, data)
+		blk, newWork, err := i.flushBucket(bucket, data)
 		if err != nil {
-			return err
+			return 0, err
 		}
 		blks = append(blks, bucketBlock{bucket, blk})
+		work += newWork
 	}
 	i.bucketLk.Lock()
 	defer i.bucketLk.Unlock()
-	i.curPool = make(bucketPool, BucketPoolSize)
 	for _, blk := range blks {
 		bucket := blk.bucket
 		pos := blk.blk.Offset
 		size := blk.blk.Size
 		if err := i.buckets.Put(bucket, pos); err != nil {
-			return err
+			return 0, err
 		}
 		if err := i.sizeBuckets.Put(bucket, size); err != nil {
-			return err
+			return 0, err
 		}
 	}
 
-	return nil
+	return work, nil
 }
 
 func (i *Index) readBucketInfo(bucket BucketIndex) ([]byte, Position, Size, error) {
@@ -406,7 +415,7 @@ func (i *Index) readDiskBuckets(bucket BucketIndex, indexOffset Position, record
 	// Read the record list from disk and get the file offset of that key in the primary
 	// storage.
 	data := make([]byte, recordListSize)
-	_, err := i.reader.ReadAt(data, int64(indexOffset))
+	_, err := i.file.ReadAt(data, int64(indexOffset))
 	if err != nil {
 		return nil, err
 	}
@@ -451,8 +460,31 @@ func (i *Index) Get(key []byte) (Block, bool, error) {
 	return fileOffset, found, nil
 }
 
-func (i *Index) Flush() error {
+func (i *Index) Flush() (Work, error) {
 	return i.commit()
+}
+
+func (i *Index) Sync() error {
+	if err := i.writer.Flush(); err != nil {
+		return err
+	}
+	if err := i.file.Sync(); err != nil {
+		return err
+	}
+	i.bucketLk.Lock()
+	i.curPool = make(bucketPool, BucketPoolSize)
+	i.bucketLk.Unlock()
+	return nil
+}
+
+func (i *Index) Close() error {
+	return i.file.Close()
+}
+
+func (i *Index) OutstandingWork() Work {
+	i.bucketLk.RLock()
+	defer i.bucketLk.RUnlock()
+	return i.outstandingWork
 }
 
 // An iterator over index entries.

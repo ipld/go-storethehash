@@ -1,24 +1,21 @@
 package testutil
 
 import (
-	"bytes"
+	"math/rand"
 
 	blocks "github.com/ipfs/go-block-format"
 	"github.com/ipfs/go-cid"
 	blocksutil "github.com/ipfs/go-ipfs-blocksutil"
 	util "github.com/ipfs/go-ipfs-util"
-	"github.com/jbenet/go-random"
 )
 
 var blockGenerator = blocksutil.NewBlockGenerator()
-var seedSeq int64
 
 // RandomBytes returns a byte array of the given size with random values.
 func RandomBytes(n int64) []byte {
-	data := new(bytes.Buffer)
-	_ = random.WritePseudoRandomBytes(n, data, seedSeq)
-	seedSeq++
-	return data.Bytes()
+	data := make([]byte, n)
+	_, _ = rand.Read(data)
+	return data
 }
 
 // GenerateBlocksOfSize generates a series of blocks of the given byte size

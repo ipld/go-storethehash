@@ -1,6 +1,7 @@
 package cidprimary
 
 import (
+	"bufio"
 	"encoding/binary"
 	"io"
 	"os"
@@ -17,14 +18,16 @@ const CIDSizePrefix = 4
 
 // A primary storage that is CID aware.
 type CIDPrimary struct {
-	reader            *os.File
-	writer            *os.File
+	file              *os.File
+	writer            *bufio.Writer
 	length            store.Position
+	outstandingWork   store.Work
 	curPool, nextPool blockPool
 	poolLk            sync.RWMutex
 }
 
-const blockPoolSize = 128
+const blockBufferSize = 32 * 4096
+const blockPoolSize = 1024
 
 type blockRecord struct {
 	key   []byte
@@ -52,8 +55,8 @@ func OpenCIDPrimary(path string) (*CIDPrimary, error) {
 		return nil, err
 	}
 	return &CIDPrimary{
-		reader:   file,
-		writer:   file,
+		file:     file,
+		writer:   bufio.NewWriterSize(file, blockBufferSize),
 		length:   store.Position(length),
 		curPool:  newBlockPool(),
 		nextPool: newBlockPool(),
@@ -70,7 +73,7 @@ func (cp *CIDPrimary) getCached(blk store.Block) ([]byte, []byte, error) {
 	}
 	idx, ok = cp.curPool.refs[blk]
 	if ok {
-		br := cp.nextPool.blocks[idx]
+		br := cp.curPool.blocks[idx]
 		return br.key, br.value, nil
 	}
 	if blk.Offset >= cp.length {
@@ -88,7 +91,7 @@ func (cp *CIDPrimary) Get(blk store.Block) (key []byte, value []byte, err error)
 		return
 	}
 	read := make([]byte, CIDSizePrefix+int(blk.Size))
-	cp.reader.ReadAt(read, int64(blk.Offset))
+	cp.file.ReadAt(read, int64(blk.Offset))
 	c, value, err := readNode(read[4:])
 	return c.Bytes(), value, err
 }
@@ -111,23 +114,24 @@ func (cp *CIDPrimary) Put(key []byte, value []byte) (store.Block, error) {
 	blk := store.Block{Offset: length, Size: store.Size(size)}
 	cp.nextPool.refs[blk] = len(cp.nextPool.blocks)
 	cp.nextPool.blocks = append(cp.nextPool.blocks, blockRecord{key, value})
+	cp.outstandingWork += store.Work(size + CIDSizePrefix)
 	return blk, nil
 }
 
-func (cp *CIDPrimary) flushBlock(key []byte, value []byte) error {
+func (cp *CIDPrimary) flushBlock(key []byte, value []byte) (store.Work, error) {
 	size := len(key) + len(value)
 	sizeBuf := make([]byte, 4)
 	binary.LittleEndian.PutUint32(sizeBuf, uint32(size))
 	if _, err := cp.writer.Write(sizeBuf); err != nil {
-		return err
+		return 0, err
 	}
 	if _, err := cp.writer.Write(key); err != nil {
-		return err
+		return 0, err
 	}
 	if _, err := cp.writer.Write(value); err != nil {
-		return err
+		return 0, err
 	}
-	return nil
+	return store.Work(CIDSizePrefix + size), nil
 }
 
 func (cp *CIDPrimary) IndexKey(key []byte) ([]byte, error) {
@@ -151,34 +155,55 @@ func (cp *CIDPrimary) GetIndexKey(blk store.Block) ([]byte, error) {
 	return cp.IndexKey(key)
 }
 
-func (cp *CIDPrimary) commit() error {
+func (cp *CIDPrimary) commit() (store.Work, error) {
 	cp.poolLk.Lock()
 	nextPool := cp.curPool
 	cp.curPool = cp.nextPool
 	cp.nextPool = nextPool
+	cp.outstandingWork = 0
 	cp.poolLk.Unlock()
 	if len(cp.curPool.blocks) == 0 {
-		return nil
+		return 0, nil
 	}
+	var work store.Work
 	for _, record := range cp.curPool.blocks {
-		err := cp.flushBlock(record.key, record.value)
+		blockWork, err := cp.flushBlock(record.key, record.value)
 		if err != nil {
-			return err
+			return 0, err
 		}
+		work += blockWork
+	}
+	return work, nil
+}
+
+func (cp *CIDPrimary) Flush() (store.Work, error) {
+	return cp.commit()
+}
+
+func (cp *CIDPrimary) Sync() error {
+	if err := cp.writer.Flush(); err != nil {
+		return err
+	}
+	if err := cp.file.Sync(); err != nil {
+		return err
 	}
 	cp.poolLk.Lock()
 	defer cp.poolLk.Unlock()
 	cp.curPool = newBlockPool()
-
 	return nil
 }
 
-func (cp *CIDPrimary) Flush() error {
-	return cp.commit()
+func (cp *CIDPrimary) Close() error {
+	return cp.file.Close()
 }
 
+func (cp *CIDPrimary) OutstandingWork() store.Work {
+	cp.poolLk.RLock()
+	defer cp.poolLk.RUnlock()
+	return cp.outstandingWork
+}
 func (cp *CIDPrimary) Iter() (store.PrimaryStorageIter, error) {
-	return NewCIDPrimaryIter(cp.reader), nil
+	return NewCIDPrimaryIter(cp.file), nil
 }
 
 func NewCIDPrimaryIter(reader *os.File) *CIDPrimaryIter {

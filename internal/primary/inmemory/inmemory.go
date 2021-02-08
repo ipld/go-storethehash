@@ -32,8 +32,20 @@ func (im *InMemory) Put(key []byte, value []byte) (blk store.Block, err error) {
 	return store.Block{Offset: store.Position(pos), Size: 1}, nil
 }
 
-func (im *InMemory) Flush() error {
+func (im *InMemory) Flush() (store.Work, error) {
+	return 0, nil
+}
+
+func (im *InMemory) Sync() error {
 	return nil
+}
+
+func (im *InMemory) Close() error {
+	return nil
+}
+
+func (im *InMemory) OutstandingWork() store.Work {
+	return 0
 }
 
 func (im *InMemory) IndexKey(key []byte) ([]byte, error) {

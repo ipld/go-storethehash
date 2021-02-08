@@ -2,6 +2,7 @@ package storethehash
 
 import (
 	"context"
+	"time"
 
 	store "github.com/hannahhoward/go-storethehash/internal"
 	cidprimary "github.com/hannahhoward/go-storethehash/internal/primary/cid"
@@ -24,21 +25,51 @@ type HashedBlockstore struct {
 	store *store.Store
 }
 
-// DefaultIndexSizeBits is the default size for in memory portion of the index
-const DefaultIndexSizeBits = uint8(24)
+const defaultIndexSizeBits = uint8(24)
+const defaultBurstRate = 4 * 1024 * 1024
+const defaultSyncInterval = time.Second
 
-// OpenHashedBlockstore opens a HashedBlockstore with the default index size
-func OpenHashedBlockstore(indexPath string, dataPath string) (*HashedBlockstore, error) {
-	return OpenHashedBlockstoreBitSize(indexPath, dataPath, DefaultIndexSizeBits)
+type configOptions struct {
+	indexSizeBits uint8
+	syncInterval  time.Duration
+	burstRate     store.Work
 }
 
-// OpenHashedBlockstoreBitSize opens a HashedBlockstore with the specified index size
-func OpenHashedBlockstoreBitSize(indexPath string, dataPath string, indexSizeBits uint8) (*HashedBlockstore, error) {
+type Option func(*configOptions)
+
+func IndexBitSize(indexBitSize uint8) Option {
+	return func(co *configOptions) {
+		co.indexSizeBits = indexBitSize
+	}
+}
+
+func SyncInterval(syncInterval time.Duration) Option {
+	return func(co *configOptions) {
+		co.syncInterval = syncInterval
+	}
+}
+
+func BurstRate(burstRate uint64) Option {
+	return func(co *configOptions) {
+		co.burstRate = store.Work(burstRate)
+	}
+}
+
+// OpenHashedBlockstore opens a HashedBlockstore with the default index size
+func OpenHashedBlockstore(indexPath string, dataPath string, options ...Option) (*HashedBlockstore, error) {
+	co := configOptions{
+		indexSizeBits: defaultIndexSizeBits,
+		syncInterval:  defaultSyncInterval,
+		burstRate:     defaultBurstRate,
+	}
+	for _, option := range options {
+		option(&co)
+	}
 	primary, err := cidprimary.OpenCIDPrimary(dataPath)
 	if err != nil {
 		return nil, err
 	}
-	store, err := store.OpenStore(indexPath, primary, indexSizeBits)
+	store, err := store.OpenStore(indexPath, primary, co.indexSizeBits, co.syncInterval, co.burstRate)
 	if err != nil {
 		return nil, err
 	}
@@ -82,11 +113,7 @@ func (bs *HashedBlockstore) GetSize(c cid.Cid) (int, error) {
 
 // Put puts a given block to the underlying datastore
 func (bs *HashedBlockstore) Put(blk blocks.Block) error {
-	err := bs.store.Put(blk.Cid().Bytes(), blk.RawData())
-	if err != nil {
-		return err
-	}
-	return bs.store.Flush()
+	return bs.store.Put(blk.Cid().Bytes(), blk.RawData())
 }
 
 // PutMany puts a slice of blocks at the same time using batching
@@ -98,7 +125,7 @@ func (bs *HashedBlockstore) PutMany(blks []blocks.Block) error {
 			return err
 		}
 	}
-	return bs.store.Flush()
+	return nil
 }
 
 // AllKeysChan returns a channel from which
@@ -113,13 +140,24 @@ func (bs *HashedBlockstore) AllKeysChan(ctx context.Context) (<-chan cid.Cid, er
 func (bs *HashedBlockstore) HashOnRead(enabled bool) {
 }
 
-// CopyInto is a special method to mass copy one store into another
-func (bs *HashedBlockstore) CopyInto(other *HashedBlockstore) error {
-	err := bs.store.CopyInto(other.store)
-	if err != nil {
-		return err
-	}
-	return other.store.Flush()
+func (bs *HashedBlockstore) Start() {
+	bs.store.Start()
+}
+
+func (bs *HashedBlockstore) Shutdown(ctx context.Context) {
+	bs.store.Close(ctx)
 }
 
 var _ bstore.Blockstore = &HashedBlockstore{}
+
+// ErrOutOfBounds indicates the bucket index was greater than the number of bucks
+const ErrOutOfBounds = store.ErrOutOfBounds
+
+// ErrIndexTooLarge indicates the maximum supported bucket size is 32-bits
+const ErrIndexTooLarge = store.ErrIndexTooLarge
+
+const ErrKeyTooShort = store.ErrKeyTooShort
+
+const ErrKeyExists = store.ErrKeyExists
+
+type ErrIndexWrongBitSize = store.ErrIndexWrongBitSize

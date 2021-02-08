@@ -36,7 +36,12 @@ func TestIndexPut(t *testing.T) {
 		expectedOffset += cidprimary.CIDSizePrefix + store.Position(expectedSize)
 	}
 
-	err = primaryStorage.Flush()
+	outstandingWork := primaryStorage.OutstandingWork()
+	require.Equal(t, store.Work(expectedOffset), outstandingWork)
+	work, err := primaryStorage.Flush()
+	require.NoError(t, err)
+	require.Equal(t, store.Work(expectedOffset), work)
+	err = primaryStorage.Sync()
 	require.NoError(t, err)
 
 	// Skip header
@@ -103,7 +108,9 @@ func TestIndexGet(t *testing.T) {
 	}
 
 	// should fetch from disk after flush
-	err = primaryStorage.Flush()
+	_, err = primaryStorage.Flush()
+	require.NoError(t, err)
+	err = primaryStorage.Sync()
 	require.NoError(t, err)
 
 	for i, loc := range locs {

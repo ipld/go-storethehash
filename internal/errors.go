@@ -16,6 +16,8 @@ const ErrIndexTooLarge = errorType("Index size cannot be more than 32-bits")
 
 const ErrKeyTooShort = errorType("Key must be at least 4 bytes long")
 
+const ErrKeyExists = errorType("key exists")
+
 type ErrIndexWrongBitSize [2]byte
 
 func (e ErrIndexWrongBitSize) Error() string {
