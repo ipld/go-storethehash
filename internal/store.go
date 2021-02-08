@@ -2,7 +2,6 @@ package store
 
 import (
 	"bytes"
-	"context"
 	"math"
 	"sync"
 	"time"
@@ -24,7 +23,6 @@ type Store struct {
 	lastFlush time.Time
 
 	closing      chan struct{}
-	closed       chan struct{}
 	syncInterval time.Duration
 }
 
@@ -41,7 +39,6 @@ func OpenStore(path string, primary PrimaryStorage, indexSizeBits uint8, syncInt
 		syncInterval: syncInterval,
 		burstRate:    burstRate,
 		closing:      make(chan struct{}),
-		closed:       make(chan struct{}),
 	}
 	return store, nil
 }
@@ -57,7 +54,6 @@ func (s *Store) Start() {
 }
 
 func (s *Store) run() {
-	defer close(s.closed)
 	d := time.NewTicker(s.syncInterval)
 
 	for {
@@ -77,7 +73,7 @@ func (s *Store) run() {
 	}
 }
 
-func (s *Store) Close(ctx context.Context) error {
+func (s *Store) Close() error {
 	s.stateLk.Lock()
 	open := s.open
 	s.open = false
@@ -94,11 +90,6 @@ func (s *Store) Close(ctx context.Context) error {
 
 	if running {
 		close(s.closing)
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		case <-s.closed:
-		}
 	}
 
 	if s.outstandingWork() {
@@ -175,7 +166,7 @@ func (s *Store) Put(key []byte, value []byte) error {
 	// we assume that a second put should NOT write twice
 	// the reason is we are assuming the key is the immutable hash for the value
 	if has {
-		return nil
+		return ErrKeyExists
 	}
 	fileOffset, err := s.index.Primary.Put(key, value)
 	if err != nil {

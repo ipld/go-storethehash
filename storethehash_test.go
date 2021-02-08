@@ -32,7 +32,7 @@ func TestParallelism(t *testing.T) {
 	bs, err := storethehash.OpenHashedBlockstore(indexPath, dataPath)
 	require.NoError(t, err)
 	bs.Start()
-	defer bs.Shutdown(ctx)
+	defer bs.Close()
 
 	blks := testutil.GenerateBlocksOfSize(500, 100)
 

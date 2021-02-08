@@ -144,8 +144,8 @@ func (bs *HashedBlockstore) Start() {
 	bs.store.Start()
 }
 
-func (bs *HashedBlockstore) Shutdown(ctx context.Context) {
-	bs.store.Close(ctx)
+func (bs *HashedBlockstore) Close() {
+	bs.store.Close()
 }
 
 var _ bstore.Blockstore = &HashedBlockstore{}
