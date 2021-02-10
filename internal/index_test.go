@@ -186,6 +186,30 @@ func TestIndexPutDistinctKey(t *testing.T) {
 	}
 	require.Equal(t, keys, [][]byte{{4}, {55}}, "All keys are trimmed to a single byte")
 }
+func TestCorrectCacheReading(t *testing.T) {
+	const bucketBits uint8 = 24
+	primaryStorage := inmemory.NewInmemory([][2][]byte{})
+	tempDir, err := ioutil.TempDir("", "sth")
+	require.NoError(t, err)
+	indexPath := filepath.Join(tempDir, "storethehash.index")
+	index, err := store.OpenIndex(indexPath, primaryStorage, bucketBits)
+	require.NoError(t, err)
+	// put key in, then flush the cache
+	err = index.Put([]byte{1, 2, 3, 4, 5, 6, 7, 8, 9, 10}, store.Block{Offset: 222, Size: 10})
+	require.NoError(t, err)
+	_, err = index.Flush()
+	require.NoError(t, err)
+	// now put two keys in the same bucket
+	err = index.Put([]byte{1, 2, 3, 55, 5, 6, 7, 8, 9, 10}, store.Block{Offset: 333, Size: 10})
+	require.NoError(t, err)
+	err = index.Put([]byte{1, 2, 3, 88, 5, 6, 7, 8, 9, 10}, store.Block{Offset: 500, Size: 10})
+	require.NoError(t, err)
+
+	block, found, err := index.Get([]byte{1, 2, 3, 55, 5, 6, 7, 8, 9, 10})
+	require.NoError(t, err)
+	require.True(t, found)
+	require.Equal(t, store.Block{Offset: 333, Size: 10}, block)
+}
 
 // This test is about making sure that a key is trimmed correctly if it shares a prefix with the
 // previous key

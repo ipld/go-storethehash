@@ -389,11 +389,12 @@ func (i *Index) commit() (Work, error) {
 }
 
 func (i *Index) readBucketInfo(bucket BucketIndex) ([]byte, Position, Size, error) {
-	data, ok := i.curPool[bucket]
+
+	data, ok := i.nextPool[bucket]
 	if ok {
 		return data, 0, 0, nil
 	}
-	data, ok = i.nextPool[bucket]
+	data, ok = i.curPool[bucket]
 	if ok {
 		return data, 0, 0, nil
 	}
