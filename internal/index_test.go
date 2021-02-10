@@ -324,6 +324,60 @@ func TestIndexGet(t *testing.T) {
 	_, found, err = index.Get([]byte{1, 2, 3, 4, 5})
 	require.False(t, found)
 	require.NoError(t, err)
+
+	// same should hold true after flush
+	_, err = index.Flush()
+	require.NoError(t, err)
+	err = index.Sync()
+	require.NoError(t, err)
+
+	firstKeyBlock, found, err = index.Get(key1)
+	require.NoError(t, err)
+	require.True(t, found)
+	require.Equal(t, firstKeyBlock, store.Block{Offset: 0, Size: 1})
+
+	secondKeyBlock, found, err = index.Get(key2)
+	require.NoError(t, err)
+	require.True(t, found)
+	require.Equal(t, secondKeyBlock, store.Block{Offset: 1, Size: 1})
+
+	thirdKeyBlock, found, err = index.Get(key3)
+	require.NoError(t, err)
+	require.True(t, found)
+	require.Equal(t, thirdKeyBlock, store.Block{Offset: 2, Size: 1})
+
+	// It still hits a bucket where there are keys, but that key doesn't exist.
+	_, found, err = index.Get([]byte{1, 2, 3, 4, 5, 9})
+	require.False(t, found)
+	require.NoError(t, err)
+
+	// A key that matches some prefixes but it shorter than the prefixes.
+	_, found, err = index.Get([]byte{1, 2, 3, 4, 5})
+	require.False(t, found)
+	require.NoError(t, err)
+
+	err = index.Close()
+	require.NoError(t, err)
+	index, err = store.OpenIndex(indexPath, primaryStorage, bucketBits)
+	require.NoError(t, err)
+
+	// same should hold true when index is closed and reopened
+
+	firstKeyBlock, found, err = index.Get(key1)
+	require.NoError(t, err)
+	require.True(t, found)
+	require.Equal(t, firstKeyBlock, store.Block{Offset: 0, Size: 1})
+
+	secondKeyBlock, found, err = index.Get(key2)
+	require.NoError(t, err)
+	require.True(t, found)
+	require.Equal(t, secondKeyBlock, store.Block{Offset: 1, Size: 1})
+
+	thirdKeyBlock, found, err = index.Get(key3)
+	require.NoError(t, err)
+	require.True(t, found)
+	require.Equal(t, thirdKeyBlock, store.Block{Offset: 2, Size: 1})
+
 }
 
 func TestIndexHeader(t *testing.T) {
