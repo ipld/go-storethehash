@@ -113,7 +113,7 @@ func (bs *HashedBlockstore) GetSize(c cid.Cid) (int, error) {
 
 // Put puts a given block to the underlying datastore
 func (bs *HashedBlockstore) Put(blk blocks.Block) error {
-	err := bs.store.Put(blk.Cid().Bytes(), blk.RawData())
+	err := bs.store.PutImmut(blk.Cid().Bytes(), blk.RawData())
 	// suppress key exist error because this is not expected behavior for a blockstore
 	if err == store.ErrKeyExists {
 		return nil

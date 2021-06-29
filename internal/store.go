@@ -154,7 +154,7 @@ func (s *Store) setErr(err error) {
 	s.stateLk.Unlock()
 }
 
-func (s *Store) Put(key []byte, value []byte) error {
+func (s *Store) PutImmut(key []byte, value []byte) error {
 	if err := s.Err(); err != nil {
 		return err
 	}
@@ -163,15 +163,26 @@ func (s *Store) Put(key []byte, value []byte) error {
 	if err != nil {
 		return err
 	}
-	// we assume that a second put should NOT write twice
+	// for the blockstore we assume that a second put should NOT write twice
 	// the reason is we are assuming the key is the immutable hash for the value
 	if has {
 		return ErrKeyExists
 	}
+
+	return s.Put(key, value)
+}
+
+func (s *Store) Put(key []byte, value []byte) error {
+	if err := s.Err(); err != nil {
+		return err
+	}
+
+	// Put in primary storage
 	fileOffset, err := s.index.Primary.Put(key, value)
 	if err != nil {
 		return err
 	}
+	// Generate indexKey of primary storage (i.e. CID multihash for cid primary)
 	indexKey, err := s.index.Primary.IndexKey(key)
 	if err != nil {
 		return err

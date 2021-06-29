@@ -96,6 +96,7 @@ func (cp *CIDPrimary) Get(blk store.Block) (key []byte, value []byte, err error)
 	return c.Bytes(), value, err
 }
 
+// readNode extracts the Cid from the data read and splits key and value.
 func readNode(data []byte) (cid.Cid, []byte, error) {
 	c, n, err := util.ReadCid(data)
 	if err != nil {
