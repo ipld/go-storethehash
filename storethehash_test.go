@@ -11,8 +11,8 @@ import (
 	"time"
 
 	"github.com/hannahhoward/go-storethehash"
-	store "github.com/hannahhoward/go-storethehash/internal"
-	"github.com/hannahhoward/go-storethehash/internal/testutil"
+	store "github.com/hannahhoward/go-storethehash/store"
+	"github.com/hannahhoward/go-storethehash/store/testutil"
 	bstore "github.com/ipfs/go-ipfs-blockstore"
 	"github.com/stretchr/testify/require"
 )

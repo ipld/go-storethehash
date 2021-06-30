@@ -7,9 +7,9 @@ import (
 	"path/filepath"
 	"testing"
 
-	store "github.com/hannahhoward/go-storethehash/internal"
-	cidprimary "github.com/hannahhoward/go-storethehash/internal/primary/cid"
-	"github.com/hannahhoward/go-storethehash/internal/testutil"
+	store "github.com/hannahhoward/go-storethehash/store"
+	cidprimary "github.com/hannahhoward/go-storethehash/store/primary/cid"
+	"github.com/hannahhoward/go-storethehash/store/testutil"
 	blocks "github.com/ipfs/go-block-format"
 	"github.com/ipfs/go-cid"
 	"github.com/stretchr/testify/require"

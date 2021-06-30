@@ -4,8 +4,8 @@ import (
 	"context"
 	"time"
 
-	store "github.com/hannahhoward/go-storethehash/internal"
-	cidprimary "github.com/hannahhoward/go-storethehash/internal/primary/cid"
+	store "github.com/hannahhoward/go-storethehash/store"
+	cidprimary "github.com/hannahhoward/go-storethehash/store/primary/cid"
 	blocks "github.com/ipfs/go-block-format"
 	"github.com/ipfs/go-cid"
 	bstore "github.com/ipfs/go-ipfs-blockstore"
@@ -113,7 +113,7 @@ func (bs *HashedBlockstore) GetSize(c cid.Cid) (int, error) {
 
 // Put puts a given block to the underlying datastore
 func (bs *HashedBlockstore) Put(blk blocks.Block) error {
-	err := bs.store.PutImmut(blk.Cid().Bytes(), blk.RawData())
+	err := bs.store.Put(blk.Cid().Bytes(), blk.RawData())
 	// suppress key exist error because this is not expected behavior for a blockstore
 	if err == store.ErrKeyExists {
 		return nil

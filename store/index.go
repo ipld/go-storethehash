@@ -317,6 +317,62 @@ func (i *Index) Put(key []byte, location Block) error {
 	return nil
 }
 
+// Update a key together with a file offset into the index.
+func (i *Index) Update(key []byte, location Block) error {
+	// TODO: We can probably deduplicate the code of the beginning of this
+	// function with Put and Get... it's the same.
+	if len(key) < 4 {
+		return ErrKeyTooShort
+	}
+
+	// Determine which bucket a key falls into. Use the first few bytes of they key for it and
+	// interpret them as a little-endian integer.
+	prefix := BucketIndex(binary.LittleEndian.Uint32(key))
+	var leadingBits BucketIndex = (1 << i.sizeBits) - 1
+	bucket := prefix & leadingBits
+	i.bucketLk.Lock()
+	defer i.bucketLk.Unlock()
+
+	// Get the index file offset of the record list the key is in.
+	cached, indexOffset, recordListSize, err := i.readBucketInfo(bucket)
+	if err != nil {
+		return err
+	}
+	var records RecordList
+	if cached != nil {
+		records = NewRecordListRaw(cached)
+	} else {
+		records, err = i.readDiskBuckets(bucket, indexOffset, recordListSize)
+		if err != nil {
+			return err
+		}
+	}
+
+	// The key doesn't need the prefix that was used to find the right bucket. For simplicty
+	// only full bytes are trimmed off.
+	indexKey := StripBucketPrefix(key, i.sizeBits)
+
+	var newData []byte
+	// If no records stored in that bucket yet it means there is no key
+	// to be updated.
+	if records == nil {
+		return fmt.Errorf("no records found in index. We can't udpate the key")
+	} else {
+		// Read the record list to find the key and position
+		r := records.GetRecord(indexKey)
+		if r == nil {
+			return fmt.Errorf("key to update not found in index")
+		}
+		// We want to overwrite the key so no need to do anything else.
+		// Update key in position.
+		newData = records.PutKeys([]KeyPositionPair{{r.Key, location}}, r.Pos, r.NextPos())
+	}
+
+	i.outstandingWork += Work(len(newData) + BucketPrefixSize + SizePrefixSize)
+	i.nextPool[bucket] = newData
+	return nil
+}
+
 func (i *Index) flushBucket(bucket BucketIndex, newData []byte) (Block, Work, error) {
 	// Write new data to disk. The record list is prefixed with bucket they are in. This is
 	// needed in order to reconstruct the in-memory buckets from the index itself.

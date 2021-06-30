@@ -7,8 +7,8 @@ import (
 	"path/filepath"
 	"testing"
 
-	store "github.com/hannahhoward/go-storethehash/internal"
-	"github.com/hannahhoward/go-storethehash/internal/primary/inmemory"
+	store "github.com/hannahhoward/go-storethehash/store"
+	"github.com/hannahhoward/go-storethehash/store/primary/inmemory"
 	"github.com/stretchr/testify/require"
 )
 

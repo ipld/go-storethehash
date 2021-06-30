@@ -3,7 +3,7 @@ package inmemory
 import (
 	"io"
 
-	store "github.com/hannahhoward/go-storethehash/internal"
+	store "github.com/hannahhoward/go-storethehash/store"
 )
 
 //! In-memory primary storage implementation.

@@ -11,7 +11,7 @@ import (
 	util "github.com/ipld/go-car/util"
 	"github.com/multiformats/go-multihash"
 
-	store "github.com/hannahhoward/go-storethehash/internal"
+	store "github.com/hannahhoward/go-storethehash/store"
 )
 
 const CIDSizePrefix = 4

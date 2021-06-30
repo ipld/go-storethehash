@@ -77,7 +77,7 @@ func (rl RecordList) FindKeyPosition(key []byte) (pos int, prev Record, hasPrev 
 // PutKeys puts keys at a certain position and returns the new data
 //
 // This method puts a continuous range of keys inside the data structure. The given range
-// is where it is put. This means that you can also override existing keys.
+// is where it is put. *This means that you can also overwrite existing keys.*
 //
 // This is needed if you insert a new key that fully contains an existing key. The existing
 // key needs to replaced by one with a larger prefix, so that it is distinguishable from the
@@ -90,10 +90,16 @@ func (rl RecordList) PutKeys(keys []KeyPositionPair, start int, end int) []byte 
 			// keys) to be bigger that that
 			(int(len(keys))*(KeySizeBytes+FileOffsetBytes+FileSizeBytes+32)))
 	newKeys = append(newKeys, rl[:start]...)
+	// Adding new keys to the beginning of the list.
 	for _, key := range keys {
 		newKeys = AddKeyPosition(newKeys, key)
 	}
 	return append(newKeys, rl[end:]...)
+}
+
+func (rl RecordList) ReplaceKey(key KeyPositionPair, pos int) []byte {
+	slotSize := KeySizeBytes + FileOffsetBytes + FileSizeBytes + 32
+	return rl.PutKeys([]KeyPositionPair{key}, pos, pos+slotSize)
 }
 
 // Get the primary storage file offset for that key.
@@ -121,6 +127,26 @@ func (rl RecordList) Get(key []byte) (Block, bool) {
 	}
 
 	return blk, matched
+}
+
+// GetRecord returns the full record for a key in the recordList
+func (rl RecordList) GetRecord(key []byte) *Record {
+	// Several prefixes can match a `key`, we are only interested in the last one that
+	// matches, hence keep a match around until we can be sure it's the last one.
+	rli := &RecordListIter{rl, 0}
+	for !rli.Done() {
+		record := rli.Next()
+		// The stored prefix of the key needs to match the requested key.
+		if bytes.HasPrefix(key, record.Key) {
+			return &record
+		} else if bytes.Compare(record.Key, key) == 1 {
+			// No keys from here on can possibly match, hence stop iterating. If we had a prefix
+			// match, return that, else return none
+			break
+		}
+	}
+
+	return nil
 }
 
 // ReadRecord reads  a record from a slice at the givem position.
@@ -172,6 +198,11 @@ func (rli *RecordListIter) Next() Record {
 	// Prepare the internal state for the next call
 	rli.pos += FileOffsetBytes + FileSizeBytes + KeySizeBytes + len(record.Key)
 	return record
+}
+
+// NextPos returns the position of the next record.
+func (r *Record) NextPos() int {
+	return r.Pos + FileOffsetBytes + FileSizeBytes + KeySizeBytes + len(r.Key)
 }
 
 // AddKeyPosition extends record data with an encoded key and a file offset.

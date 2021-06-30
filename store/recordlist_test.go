@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"testing"
 
-	store "github.com/hannahhoward/go-storethehash/internal"
+	store "github.com/hannahhoward/go-storethehash/store"
 	"github.com/stretchr/testify/require"
 )
 
@@ -56,6 +56,13 @@ func TestRecordListIterator(t *testing.T) {
 		require.False(t, recordsIter.Done())
 		require.Equal(t, record, recordsIter.Next())
 	}
+
+	// Verify that we can compute next position successfully.
+	// First key
+	r := records.GetRecord([]byte(keys[1]))
+	npos := r.NextPos()
+	nr := records.GetRecord([]byte(keys[2]))
+	require.Equal(t, npos, nr.Pos)
 }
 
 func TestRecordListFindKeyPosition(t *testing.T) {

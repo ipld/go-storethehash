@@ -10,7 +10,8 @@ import (
 const DefaultBurstRate = 4 * 1024 * 1024
 
 type Store struct {
-	index *Index
+	index    *Index
+	freelist *FreeList
 
 	stateLk sync.RWMutex
 	open    bool
@@ -31,9 +32,14 @@ func OpenStore(path string, primary PrimaryStorage, indexSizeBits uint8, syncInt
 	if err != nil {
 		return nil, err
 	}
+	freelist, err := OpenFreeList(path + ".free")
+	if err != nil {
+		return nil, err
+	}
 	store := &Store{
 		lastFlush:    time.Now(),
 		index:        index,
+		freelist:     freelist,
 		open:         true,
 		running:      false,
 		syncInterval: syncInterval,
@@ -154,46 +160,73 @@ func (s *Store) setErr(err error) {
 	s.stateLk.Unlock()
 }
 
-func (s *Store) PutImmut(key []byte, value []byte) error {
-	if err := s.Err(); err != nil {
-		return err
-	}
-
-	has, err := s.Has(key)
-	if err != nil {
-		return err
-	}
-	// for the blockstore we assume that a second put should NOT write twice
-	// the reason is we are assuming the key is the immutable hash for the value
-	if has {
-		return ErrKeyExists
-	}
-
-	return s.Put(key, value)
-}
-
 func (s *Store) Put(key []byte, value []byte) error {
 	if err := s.Err(); err != nil {
 		return err
 	}
 
-	// Put in primary storage
-	fileOffset, err := s.index.Primary.Put(key, value)
-	if err != nil {
-		return err
-	}
-	// Generate indexKey of primary storage (i.e. CID multihash for cid primary)
+	// Get the key in primary storage
 	indexKey, err := s.index.Primary.IndexKey(key)
 	if err != nil {
 		return err
 	}
-	if err := s.index.Put(indexKey, fileOffset); err != nil {
+	// See if the key already exists and get offset
+	prevOffset, found, err := s.index.Get(indexKey)
+	if err != nil {
 		return err
 	}
+	// If found get the key and value stored in primary to see if it is the same
+	// (index only stores prefixes)
+	var storedKey []byte
+	var storedVal []byte
+	if found {
+		storedKey, storedVal, err = s.index.Primary.Get(prevOffset)
+		if err != nil {
+			return err
+		}
+	}
+
+	if bytes.Compare(key, storedKey)+bytes.Compare(value, storedVal) == 0 {
+		// We are trying to put the same value in an existing key,
+		// we can directly return
+		// NOTE: How many times is going to happen this. Can we save ourselves
+		// this step? We can't in the case of the blockstore.
+		return nil
+	}
+
+	// We are ready now to start putting/updating the value in the key.
+	// Put value in primary storage first
+	fileOffset, err := s.index.Primary.Put(key, value)
+	if err != nil {
+		return err
+	}
+
+	// If the key being set is not found, or the stored key is not equal
+	// (even if same prefix is shared @index), we put the key without updates
+	if !found || bytes.Compare(key, storedKey) != 0 {
+		if err := s.index.Put(indexKey, fileOffset); err != nil {
+			return err
+		}
+	}
+	// If the key exists and the one stored is the one we are trying
+	// to put this is an update.
+	if found && bytes.Compare(key, storedKey) == 0 {
+		if err := s.index.Update(indexKey, fileOffset); err != nil {
+			return err
+		}
+	}
+
+	// Add outdated data in primary storage to freelist
+	err = s.freelist.Put(prevOffset)
+	if err != nil {
+		return err
+	}
+
 	now := time.Now()
 	s.rateLk.Lock()
 	elapsed := now.Sub(s.lastFlush)
-	work := s.index.OutstandingWork() + s.index.Primary.OutstandingWork() // TODO: move this calculation into Pool
+	// TODO: move this Outstanding calculation into Pool?
+	work := s.index.OutstandingWork() + s.index.Primary.OutstandingWork() + s.freelist.OutstandingWork()
 	rate := math.Ceil(float64(work) / elapsed.Seconds())
 	sleep := s.rate > 0 && rate > s.rate && work > s.burstRate
 	s.rateLk.Unlock()
