@@ -97,11 +97,6 @@ func (rl RecordList) PutKeys(keys []KeyPositionPair, start int, end int) []byte 
 	return append(newKeys, rl[end:]...)
 }
 
-func (rl RecordList) ReplaceKey(key KeyPositionPair, pos int) []byte {
-	slotSize := KeySizeBytes + FileOffsetBytes + FileSizeBytes + 32
-	return rl.PutKeys([]KeyPositionPair{key}, pos, pos+slotSize)
-}
-
 // Get the primary storage file offset for that key.
 //
 // As the index is only storing prefixes and not the actual keys, the returned offset might
