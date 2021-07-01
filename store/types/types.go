@@ -1,4 +1,4 @@
-package store
+package types
 
 // Position indicates a position in a file
 type Position uint64

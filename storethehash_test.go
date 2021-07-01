@@ -11,8 +11,8 @@ import (
 	"time"
 
 	"github.com/hannahhoward/go-storethehash"
-	store "github.com/hannahhoward/go-storethehash/store"
 	"github.com/hannahhoward/go-storethehash/store/testutil"
+	"github.com/hannahhoward/go-storethehash/store/types"
 	bstore "github.com/ipfs/go-ipfs-blockstore"
 	"github.com/stretchr/testify/require"
 )
@@ -40,7 +40,7 @@ func TestParallelism(t *testing.T) {
 	duplicates := 0
 	for _, blk := range blks {
 		if err := bs.Put(blk); err != nil {
-			if errors.Is(err, store.ErrKeyExists) {
+			if errors.Is(err, types.ErrKeyExists) {
 				duplicates++
 				continue
 			}
@@ -83,7 +83,7 @@ func TestParallelism(t *testing.T) {
 				}
 				for i := 0; i < 500; i++ {
 					blk := newBlks[rand.Intn(len(newBlks))]
-					if err := bs.Put(blk); err != nil && !errors.Is(err, store.ErrKeyExists) {
+					if err := bs.Put(blk); err != nil && !errors.Is(err, types.ErrKeyExists) {
 						t.Logf("Failed to insert: %v\n", err)
 						outputErrors <- err
 						return

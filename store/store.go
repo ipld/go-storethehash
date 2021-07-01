@@ -5,13 +5,18 @@ import (
 	"math"
 	"sync"
 	"time"
+
+	"github.com/hannahhoward/go-storethehash/store/freelist"
+	"github.com/hannahhoward/go-storethehash/store/index"
+	"github.com/hannahhoward/go-storethehash/store/primary"
+	"github.com/hannahhoward/go-storethehash/store/types"
 )
 
 const DefaultBurstRate = 4 * 1024 * 1024
 
 type Store struct {
-	index    *Index
-	freelist *FreeList
+	index    *index.Index
+	freelist *freelist.FreeList
 
 	stateLk sync.RWMutex
 	open    bool
@@ -20,19 +25,19 @@ type Store struct {
 
 	rateLk    sync.RWMutex
 	rate      float64 // rate at which data can be flushed
-	burstRate Work
+	burstRate types.Work
 	lastFlush time.Time
 
 	closing      chan struct{}
 	syncInterval time.Duration
 }
 
-func OpenStore(path string, primary PrimaryStorage, indexSizeBits uint8, syncInterval time.Duration, burstRate Work) (*Store, error) {
-	index, err := OpenIndex(path, primary, indexSizeBits)
+func OpenStore(path string, primary primary.PrimaryStorage, indexSizeBits uint8, syncInterval time.Duration, burstRate types.Work) (*Store, error) {
+	index, err := index.OpenIndex(path, primary, indexSizeBits)
 	if err != nil {
 		return nil, err
 	}
-	freelist, err := OpenFreeList(path + ".free")
+	freelist, err := freelist.OpenFreeList(path + ".free")
 	if err != nil {
 		return nil, err
 	}
@@ -238,7 +243,7 @@ func (s *Store) Put(key []byte, value []byte) error {
 	return nil
 }
 
-func (s *Store) commit() (Work, error) {
+func (s *Store) commit() (types.Work, error) {
 
 	primaryWork, err := s.index.Primary.Flush()
 	if err != nil {
@@ -281,7 +286,7 @@ func (s *Store) Flush() {
 	s.rateLk.Lock()
 	elapsed := now.Sub(s.lastFlush)
 	rate := math.Ceil(float64(work) / elapsed.Seconds())
-	if work > Work(s.burstRate) {
+	if work > types.Work(s.burstRate) {
 		s.rate = rate
 	}
 	s.rateLk.Unlock()
@@ -311,7 +316,7 @@ func (s *Store) Has(key []byte) (bool, error) {
 	return bytes.Compare(indexKey, primaryIndexKey) == 0, nil
 }
 
-func (s *Store) GetSize(key []byte) (Size, bool, error) {
+func (s *Store) GetSize(key []byte) (types.Size, bool, error) {
 	indexKey, err := s.index.Primary.IndexKey(key)
 	if err != nil {
 		return 0, false, err
@@ -335,5 +340,5 @@ func (s *Store) GetSize(key []byte) (Size, bool, error) {
 	if bytes.Compare(indexKey, primaryIndexKey) != 0 {
 		return 0, false, nil
 	}
-	return blk.Size - Size(len(key)), true, nil
+	return blk.Size - types.Size(len(key)), true, nil
 }

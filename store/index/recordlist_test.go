@@ -1,10 +1,11 @@
-package store_test
+package index_test
 
 import (
 	"fmt"
 	"testing"
 
-	store "github.com/hannahhoward/go-storethehash/store"
+	"github.com/hannahhoward/go-storethehash/store/index"
+	"github.com/hannahhoward/go-storethehash/store/types"
 	"github.com/stretchr/testify/require"
 )
 
@@ -12,7 +13,7 @@ func TestEncodeKeyPosition(t *testing.T) {
 	key := []byte("abcdefg")
 	offset := 4326
 	size := 64
-	encoded := store.EncodeKeyPosition(store.KeyPositionPair{key, store.Block{store.Position(offset), store.Size(size)}})
+	encoded := index.EncodeKeyPosition(index.KeyPositionPair{key, types.Block{types.Position(offset), types.Size(size)}})
 	require.Equal(t,
 		encoded,
 		[]byte{
@@ -29,12 +30,12 @@ func TestRecordListIterator(t *testing.T) {
 		keys = append(keys, fmt.Sprintf("key-%02d", i))
 	}
 
-	var expected []store.Record
+	var expected []index.Record
 	for i, key := range keys {
-		expected = append(expected, store.Record{
-			KeyPositionPair: store.KeyPositionPair{
+		expected = append(expected, index.Record{
+			KeyPositionPair: index.KeyPositionPair{
 				Key:   []byte(key),
-				Block: store.Block{store.Position(i), store.Size(i)},
+				Block: types.Block{types.Position(i), types.Size(i)},
 			},
 			Pos: i * 19,
 		})
@@ -43,14 +44,14 @@ func TestRecordListIterator(t *testing.T) {
 	// Encode them into records list
 	var data []byte
 	for _, record := range expected {
-		encoded := store.EncodeKeyPosition(record.KeyPositionPair)
+		encoded := index.EncodeKeyPosition(record.KeyPositionPair)
 		data = append(data, encoded...)
 	}
 
 	// The record list have the bits that were used to determine the bucket as prefix
 	prefixedData := append([]byte{0, 0, 0, 0}, data...)
 	// Verify that it can be correctly iterated over those encoded records
-	records := store.NewRecordList(prefixedData)
+	records := index.NewRecordList(prefixedData)
 	recordsIter := records.Iter()
 	for _, record := range expected {
 		require.False(t, recordsIter.Done())
@@ -71,12 +72,12 @@ func TestRecordListFindKeyPosition(t *testing.T) {
 	// Encode them into records list
 	var data []byte
 	for i, key := range keys {
-		encoded := store.EncodeKeyPosition(store.KeyPositionPair{[]byte(key), store.Block{store.Position(i), store.Size(i)}})
+		encoded := index.EncodeKeyPosition(index.KeyPositionPair{[]byte(key), types.Block{types.Position(i), types.Size(i)}})
 		data = append(data, encoded...)
 	}
 	// The record list have the bits that were used to determine the bucket as prefix
 	prefixedData := append([]byte{0, 0, 0, 0}, data...)
-	records := store.NewRecordList(prefixedData)
+	records := index.NewRecordList(prefixedData)
 
 	// First key
 	pos, prevRecord, hasPrev := records.FindKeyPosition([]byte("ABCD"))
@@ -124,16 +125,16 @@ func TestRecordListFindKeyPosition(t *testing.T) {
 }
 
 // Validate that the new key was properly added
-func assertAddKey(t *testing.T, records store.RecordList, key []byte) {
+func assertAddKey(t *testing.T, records index.RecordList, key []byte) {
 	pos, _, _ := records.FindKeyPosition(key)
-	newData := records.PutKeys([]store.KeyPositionPair{{key, store.Block{store.Position(773), store.Size(48)}}}, pos, pos)
+	newData := records.PutKeys([]index.KeyPositionPair{{key, types.Block{types.Position(773), types.Size(48)}}}, pos, pos)
 	// The record list have the bits that were used to determine the bucket as prefix
 	prefixedNewData := append([]byte{0, 0, 0, 0}, newData...)
-	newRecords := store.NewRecordList(prefixedNewData)
+	newRecords := index.NewRecordList(prefixedNewData)
 	insertedPos, insertedRecord, _ := newRecords.FindKeyPosition(key)
 	require.Equal(t,
 		insertedPos,
-		pos+store.FileOffsetBytes+store.FileSizeBytes+store.KeySizeBytes+len(key),
+		pos+index.FileOffsetBytes+index.FileSizeBytes+index.KeySizeBytes+len(key),
 	)
 	require.Equal(t, insertedRecord.Key, key)
 }
@@ -144,12 +145,12 @@ func TestRecordListAddKeyWithoutReplacing(t *testing.T) {
 	// Encode them into records list
 	var data []byte
 	for i, key := range keys {
-		encoded := store.EncodeKeyPosition(store.KeyPositionPair{[]byte(key), store.Block{store.Position(i), store.Size(i)}})
+		encoded := index.EncodeKeyPosition(index.KeyPositionPair{[]byte(key), types.Block{types.Position(i), types.Size(i)}})
 		data = append(data, encoded...)
 	}
 	// The record list have the bits that were used to determine the bucket as prefix
 	prefixedData := append([]byte{0, 0, 0, 0}, data...)
-	records := store.NewRecordList(prefixedData)
+	records := index.NewRecordList(prefixedData)
 
 	// First key
 	assertAddKey(t, records, []byte("ABCD"))
@@ -181,15 +182,15 @@ func TestRecordListAddKeyWithoutReplacing(t *testing.T) {
 }
 
 // Validate that the previous key was properly replaced and the new key was added.
-func assertAddKeyAndReplacePrev(t *testing.T, records store.RecordList, key []byte, newPrevKey []byte) {
+func assertAddKeyAndReplacePrev(t *testing.T, records index.RecordList, key []byte, newPrevKey []byte) {
 	pos, prevRecord, hasPrev := records.FindKeyPosition(key)
 	require.True(t, hasPrev)
 
-	keys := []store.KeyPositionPair{{newPrevKey, prevRecord.Block}, {key, store.Block{store.Position(773), store.Size(48)}}}
+	keys := []index.KeyPositionPair{{newPrevKey, prevRecord.Block}, {key, types.Block{types.Position(773), types.Size(48)}}}
 	newData := records.PutKeys(keys, prevRecord.Pos, pos)
 	// The record list have the bits that were used to determine the bucket as prefix
 	prefixedNewData := append([]byte{0, 0, 0, 0}, newData...)
-	newRecords := store.NewRecordList(prefixedNewData)
+	newRecords := index.NewRecordList(prefixedNewData)
 
 	// Find the newly added prevKey
 	insertedPrevKeyPos, insertedPrevRecord, hasPrev := newRecords.FindKeyPosition(newPrevKey)
@@ -203,7 +204,7 @@ func assertAddKeyAndReplacePrev(t *testing.T, records store.RecordList, key []by
 	require.Equal(t,
 		insertedPos,
 		// The prev key is longer, hence use its position instead of the original one
-		insertedPrevKeyPos+store.FileOffsetBytes+store.FileSizeBytes+store.KeySizeBytes+len(key),
+		insertedPrevKeyPos+index.FileOffsetBytes+index.FileSizeBytes+index.KeySizeBytes+len(key),
 	)
 	require.Equal(t, insertedRecord.Key, key)
 }
@@ -216,12 +217,12 @@ func TestRecordListAddKeyAndReplacePrev(t *testing.T) {
 	// Encode them into records list
 	var data []byte
 	for i, key := range keys {
-		encoded := store.EncodeKeyPosition(store.KeyPositionPair{[]byte(key), store.Block{store.Position(i), store.Size(i)}})
+		encoded := index.EncodeKeyPosition(index.KeyPositionPair{[]byte(key), types.Block{types.Position(i), types.Size(i)}})
 		data = append(data, encoded...)
 	}
 	// The record list have the bits that were used to determine the bucket as prefix
 	prefixedData := append([]byte{0, 0, 0, 0}, data...)
-	records := store.NewRecordList(prefixedData)
+	records := index.NewRecordList(prefixedData)
 
 	// Between two keys with same prefix, but first one being shorter
 	assertAddKeyAndReplacePrev(t, records, []byte("ab"), []byte("aa"))
@@ -252,37 +253,37 @@ func TestRecordListGetKey(t *testing.T) {
 	// Encode them into records list
 	var data []byte
 	for i, key := range keys {
-		encoded := store.EncodeKeyPosition(store.KeyPositionPair{[]byte(key), store.Block{store.Position(i), store.Size(i)}})
+		encoded := index.EncodeKeyPosition(index.KeyPositionPair{[]byte(key), types.Block{types.Position(i), types.Size(i)}})
 		data = append(data, encoded...)
 	}
 	// The record list have the bits that were used to determine the bucket as prefix
 	prefixedData := append([]byte{0, 0, 0, 0}, data...)
-	records := store.NewRecordList(prefixedData)
+	records := index.NewRecordList(prefixedData)
 
 	// First key
 	blk, has := records.Get([]byte("a"))
 	require.True(t, has)
-	require.Equal(t, blk, store.Block{store.Position(0), store.Size(0)})
+	require.Equal(t, blk, types.Block{types.Position(0), types.Size(0)})
 
 	// Key with same prefix, but it's the second one
 	blk, has = records.Get([]byte("ac"))
 	require.True(t, has)
-	require.Equal(t, blk, store.Block{store.Position(1), store.Size(1)})
+	require.Equal(t, blk, types.Block{types.Position(1), types.Size(1)})
 
 	// Key with same length as two other keys, sharing a prefix
 	blk, has = records.Get([]byte("de"))
 	require.True(t, has)
-	require.Equal(t, blk, store.Block{store.Position(3), store.Size(3)})
+	require.Equal(t, blk, types.Block{types.Position(3), types.Size(3)})
 
 	// Key that is sharing a prefix, but is longer
 	blk, has = records.Get([]byte("dngho"))
 	require.True(t, has)
-	require.Equal(t, blk, store.Block{store.Position(4), store.Size(4)})
+	require.Equal(t, blk, types.Block{types.Position(4), types.Size(4)})
 
 	// Key that is the last one
 	blk, has = records.Get([]byte("xrlfg"))
 	require.True(t, has)
-	require.Equal(t, blk, store.Block{store.Position(6), store.Size(6)})
+	require.Equal(t, blk, types.Block{types.Position(6), types.Size(6)})
 
 	// Key that is shorter than the inserted ones cannot match
 	blk, has = records.Get([]byte("d"))

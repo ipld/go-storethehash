@@ -6,6 +6,7 @@ import (
 
 	store "github.com/hannahhoward/go-storethehash/store"
 	cidprimary "github.com/hannahhoward/go-storethehash/store/primary/cid"
+	"github.com/hannahhoward/go-storethehash/store/types"
 	blocks "github.com/ipfs/go-block-format"
 	"github.com/ipfs/go-cid"
 	bstore "github.com/ipfs/go-ipfs-blockstore"
@@ -32,7 +33,7 @@ const defaultSyncInterval = time.Second
 type configOptions struct {
 	indexSizeBits uint8
 	syncInterval  time.Duration
-	burstRate     store.Work
+	burstRate     types.Work
 }
 
 type Option func(*configOptions)
@@ -51,7 +52,7 @@ func SyncInterval(syncInterval time.Duration) Option {
 
 func BurstRate(burstRate uint64) Option {
 	return func(co *configOptions) {
-		co.burstRate = store.Work(burstRate)
+		co.burstRate = types.Work(burstRate)
 	}
 }
 
@@ -115,7 +116,7 @@ func (bs *HashedBlockstore) GetSize(c cid.Cid) (int, error) {
 func (bs *HashedBlockstore) Put(blk blocks.Block) error {
 	err := bs.store.Put(blk.Cid().Bytes(), blk.RawData())
 	// suppress key exist error because this is not expected behavior for a blockstore
-	if err == store.ErrKeyExists {
+	if err == types.ErrKeyExists {
 		return nil
 	}
 	return err
@@ -127,7 +128,7 @@ func (bs *HashedBlockstore) PutMany(blks []blocks.Block) error {
 	for _, blk := range blks {
 		err := bs.store.Put(blk.Cid().Bytes(), blk.RawData())
 		// suppress key exist error because this is not expected behavior for a blockstore
-		if err != nil && err != store.ErrKeyExists {
+		if err != nil && err != types.ErrKeyExists {
 			return err
 		}
 	}
@@ -157,13 +158,13 @@ func (bs *HashedBlockstore) Close() {
 var _ bstore.Blockstore = &HashedBlockstore{}
 
 // ErrOutOfBounds indicates the bucket index was greater than the number of bucks
-const ErrOutOfBounds = store.ErrOutOfBounds
+const ErrOutOfBounds = types.ErrOutOfBounds
 
 // ErrIndexTooLarge indicates the maximum supported bucket size is 32-bits
-const ErrIndexTooLarge = store.ErrIndexTooLarge
+const ErrIndexTooLarge = types.ErrIndexTooLarge
 
-const ErrKeyTooShort = store.ErrKeyTooShort
+const ErrKeyTooShort = types.ErrKeyTooShort
 
-const ErrKeyExists = store.ErrKeyExists
+const ErrKeyExists = types.ErrKeyExists
 
-type ErrIndexWrongBitSize = store.ErrIndexWrongBitSize
+type ErrIndexWrongBitSize = types.ErrIndexWrongBitSize

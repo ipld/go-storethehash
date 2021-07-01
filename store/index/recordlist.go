@@ -1,9 +1,11 @@
-package store
+package index
 
 import (
 	"bytes"
 	"encoding/binary"
 	"io"
+
+	"github.com/hannahhoward/go-storethehash/store/types"
 )
 
 // BucketPrefixSize is how many bytes of bucket prefixes are stored.
@@ -23,7 +25,7 @@ const KeySizeBytes int = 1
 type KeyPositionPair struct {
 	Key []byte
 	// The file offset where the full key and its value is actually stored.
-	Block Block
+	Block types.Block
 }
 
 // Record is a KeyPositionPair plus the actual position of the record in the record list
@@ -102,11 +104,11 @@ func (rl RecordList) PutKeys(keys []KeyPositionPair, start int, end int) []byte 
 // As the index is only storing prefixes and not the actual keys, the returned offset might
 // match, it's not guaranteed. Once the key is retieved from the primary storage it needs to
 // be checked if it actually matches.
-func (rl RecordList) Get(key []byte) (Block, bool) {
+func (rl RecordList) Get(key []byte) (types.Block, bool) {
 	// Several prefixes can match a `key`, we are only interested in the last one that
 	// matches, hence keep a match around until we can be sure it's the last one.
 	rli := &RecordListIter{rl, 0}
-	var blk Block
+	var blk types.Block
 	var matched bool
 	for !rli.Done() {
 		record := rli.Next()
@@ -152,9 +154,9 @@ func (rl RecordList) ReadRecord(pos int) Record {
 	size := rl[int(sizeOffset)]
 	return Record{
 		pos,
-		KeyPositionPair{rl[sizeOffset+KeySizeBytes : sizeOffset+KeySizeBytes+int(size)], Block{
-			Position(binary.LittleEndian.Uint64(rl[pos:])),
-			Size(binary.LittleEndian.Uint32(rl[pos+FileOffsetBytes:])),
+		KeyPositionPair{rl[sizeOffset+KeySizeBytes : sizeOffset+KeySizeBytes+int(size)], types.Block{
+			types.Position(binary.LittleEndian.Uint64(rl[pos:])),
+			types.Size(binary.LittleEndian.Uint32(rl[pos+FileOffsetBytes:])),
 		}},
 	}
 }

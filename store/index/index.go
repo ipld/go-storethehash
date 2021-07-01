@@ -1,4 +1,4 @@
-package store
+package index
 
 import (
 	"bufio"
@@ -8,6 +8,9 @@ import (
 	"io"
 	"os"
 	"sync"
+
+	"github.com/hannahhoward/go-storethehash/store/primary"
+	"github.com/hannahhoward/go-storethehash/store/types"
 )
 
 /* An append-only log [`recordlist`]s.
@@ -70,11 +73,11 @@ type Index struct {
 	sizeBuckets       SizeBuckets
 	file              *os.File
 	writer            *bufio.Writer
-	Primary           PrimaryStorage
+	Primary           primary.PrimaryStorage
 	bucketLk          sync.RWMutex
-	outstandingWork   Work
+	outstandingWork   types.Work
 	curPool, nextPool bucketPool
-	length            Position
+	length            types.Position
 }
 
 const indexBufferSize = 32 * 4096
@@ -86,11 +89,11 @@ const BucketPoolSize = 1024
 // Open and index.
 //
 // It is created if there is no existing index at that path.
-func OpenIndex(path string, primary PrimaryStorage, indexSizeBits uint8) (*Index, error) {
+func OpenIndex(path string, primary primary.PrimaryStorage, indexSizeBits uint8) (*Index, error) {
 	var file *os.File
 	var buckets Buckets
 	var sizeBuckets SizeBuckets
-	var length Position
+	var length types.Position
 	stat, err := os.Stat(path)
 	if os.IsNotExist(err) {
 		header := FromHeader(NewHeader(indexSizeBits))
@@ -110,7 +113,7 @@ func OpenIndex(path string, primary PrimaryStorage, indexSizeBits uint8) (*Index
 		if err := file.Sync(); err != nil {
 			return nil, err
 		}
-		length = Position(len(header) + len(headerSize))
+		length = types.Position(len(header) + len(headerSize))
 		buckets, err = NewBuckets(indexSizeBits)
 		if err != nil {
 			return nil, err
@@ -131,7 +134,7 @@ func OpenIndex(path string, primary PrimaryStorage, indexSizeBits uint8) (*Index
 		if err != nil {
 			return nil, err
 		}
-		length = Position(stat.Size())
+		length = types.Position(stat.Size())
 	}
 	return &Index{
 		indexSizeBits,
@@ -159,7 +162,7 @@ func scanIndex(path string, indexSizeBits uint8) (Buckets, SizeBuckets, error) {
 		return nil, nil, err
 	}
 	if header.BucketsBits != indexSizeBits {
-		return nil, nil, ErrIndexWrongBitSize{header.BucketsBits, indexSizeBits}
+		return nil, nil, types.ErrIndexWrongBitSize{header.BucketsBits, indexSizeBits}
 	}
 	buckets, err := NewBuckets(indexSizeBits)
 	if err != nil {
@@ -170,7 +173,7 @@ func scanIndex(path string, indexSizeBits uint8) (Buckets, SizeBuckets, error) {
 		return nil, nil, err
 	}
 	buffered := bufio.NewReader(file)
-	iter := NewIndexIter(buffered, Position(bytesRead))
+	iter := NewIndexIter(buffered, types.Position(bytesRead))
 	for {
 		data, pos, err, done := iter.Next()
 		if done == true {
@@ -189,7 +192,7 @@ func scanIndex(path string, indexSizeBits uint8) (Buckets, SizeBuckets, error) {
 		}
 		bucketPrefix := BucketIndex(binary.LittleEndian.Uint32(data))
 		buckets.Put(bucketPrefix, pos)
-		sizeBuckets.Put(bucketPrefix, Size(len(data)))
+		sizeBuckets.Put(bucketPrefix, types.Size(len(data)))
 	}
 	return buckets, sizeBuckets, nil
 }
@@ -197,9 +200,9 @@ func scanIndex(path string, indexSizeBits uint8) (Buckets, SizeBuckets, error) {
 // Put a key together with a file offset into the index.
 //
 // The key needs to be a cryptographically secure hash and at least 4 bytes long.
-func (i *Index) Put(key []byte, location Block) error {
+func (i *Index) Put(key []byte, location types.Block) error {
 	if len(key) < 4 {
-		return ErrKeyTooShort
+		return types.ErrKeyTooShort
 	}
 
 	// Determine which bucket a key falls into. Use the first few bytes of they key for it and
@@ -312,17 +315,17 @@ func (i *Index) Put(key []byte, location Block) error {
 			newData = records.PutKeys([]KeyPositionPair{{trimmedIndexKey, location}}, pos, pos)
 		}
 	}
-	i.outstandingWork += Work(len(newData) + BucketPrefixSize + SizePrefixSize)
+	i.outstandingWork += types.Work(len(newData) + BucketPrefixSize + SizePrefixSize)
 	i.nextPool[bucket] = newData
 	return nil
 }
 
 // Update a key together with a file offset into the index.
-func (i *Index) Update(key []byte, location Block) error {
+func (i *Index) Update(key []byte, location types.Block) error {
 	// TODO: We can probably deduplicate the code of the beginning of this
 	// function with Put and Get... it's the same.
 	if len(key) < 4 {
-		return ErrKeyTooShort
+		return types.ErrKeyTooShort
 	}
 
 	// Determine which bucket a key falls into. Use the first few bytes of they key for it and
@@ -368,46 +371,46 @@ func (i *Index) Update(key []byte, location Block) error {
 		newData = records.PutKeys([]KeyPositionPair{{r.Key, location}}, r.Pos, r.NextPos())
 	}
 
-	i.outstandingWork += Work(len(newData) + BucketPrefixSize + SizePrefixSize)
+	i.outstandingWork += types.Work(len(newData) + BucketPrefixSize + SizePrefixSize)
 	i.nextPool[bucket] = newData
 	return nil
 }
 
-func (i *Index) flushBucket(bucket BucketIndex, newData []byte) (Block, Work, error) {
+func (i *Index) flushBucket(bucket BucketIndex, newData []byte) (types.Block, types.Work, error) {
 	// Write new data to disk. The record list is prefixed with bucket they are in. This is
 	// needed in order to reconstruct the in-memory buckets from the index itself.
 	// TODO vmx 2020-11-25: This should be an error and not a panic
 	newDataSize := make([]byte, SizePrefixSize)
 	binary.LittleEndian.PutUint32(newDataSize, uint32(len(newData))+uint32(BucketPrefixSize))
 	if _, err := i.writer.Write(newDataSize); err != nil {
-		return Block{}, 0, err
+		return types.Block{}, 0, err
 	}
 
 	bucketPrefixBuffer := make([]byte, BucketPrefixSize)
 	binary.LittleEndian.PutUint32(bucketPrefixBuffer, uint32(bucket))
 	if _, err := i.writer.Write(bucketPrefixBuffer); err != nil {
-		return Block{}, 0, err
+		return types.Block{}, 0, err
 	}
 	if _, err := i.writer.Write(newData); err != nil {
-		return Block{}, 0, err
+		return types.Block{}, 0, err
 	}
 	length := i.length
-	toWrite := Position(len(newData) + BucketPrefixSize + SizePrefixSize)
+	toWrite := types.Position(len(newData) + BucketPrefixSize + SizePrefixSize)
 	i.length += toWrite
 	// Fsyncs are expensive
 	//self.file.syncData()?;
 
 	// Keep the reference to the stored data in the bucket
-	return Block{length + Position(SizePrefixSize), Size(len(newData) + BucketPrefixSize)},
-		Work(toWrite), nil
+	return types.Block{length + types.Position(SizePrefixSize), types.Size(len(newData) + BucketPrefixSize)},
+		types.Work(toWrite), nil
 }
 
 type bucketBlock struct {
 	bucket BucketIndex
-	blk    Block
+	blk    types.Block
 }
 
-func (i *Index) commit() (Work, error) {
+func (i *Index) commit() (types.Work, error) {
 	i.bucketLk.Lock()
 	nextPool := i.curPool
 	i.curPool = i.nextPool
@@ -418,7 +421,7 @@ func (i *Index) commit() (Work, error) {
 		return 0, nil
 	}
 	blks := make([]bucketBlock, 0, len(i.curPool))
-	var work Work
+	var work types.Work
 	for bucket, data := range i.curPool {
 		blk, newWork, err := i.flushBucket(bucket, data)
 		if err != nil {
@@ -444,7 +447,7 @@ func (i *Index) commit() (Work, error) {
 	return work, nil
 }
 
-func (i *Index) readBucketInfo(bucket BucketIndex) ([]byte, Position, Size, error) {
+func (i *Index) readBucketInfo(bucket BucketIndex) ([]byte, types.Position, types.Size, error) {
 
 	data, ok := i.nextPool[bucket]
 	if ok {
@@ -465,7 +468,7 @@ func (i *Index) readBucketInfo(bucket BucketIndex) ([]byte, Position, Size, erro
 	return nil, indexOffset, recordListSize, nil
 }
 
-func (i *Index) readDiskBuckets(bucket BucketIndex, indexOffset Position, recordListSize Size) (RecordList, error) {
+func (i *Index) readDiskBuckets(bucket BucketIndex, indexOffset types.Position, recordListSize types.Size) (RecordList, error) {
 	if indexOffset == 0 {
 		return nil, nil
 	}
@@ -480,9 +483,9 @@ func (i *Index) readDiskBuckets(bucket BucketIndex, indexOffset Position, record
 }
 
 // Get the file offset in the primary storage of a key.
-func (i *Index) Get(key []byte) (Block, bool, error) {
+func (i *Index) Get(key []byte) (types.Block, bool, error) {
 	if len(key) < 4 {
-		return Block{}, false, ErrKeyTooShort
+		return types.Block{}, false, types.ErrKeyTooShort
 	}
 	// Determine which bucket a key falls into. Use the first few bytes of they key for it and
 	// interpret them as a little-endian integer.
@@ -494,7 +497,7 @@ func (i *Index) Get(key []byte) (Block, bool, error) {
 	cached, indexOffset, recordListSize, err := i.readBucketInfo(bucket)
 	i.bucketLk.RUnlock()
 	if err != nil {
-		return Block{}, false, err
+		return types.Block{}, false, err
 	}
 	var records RecordList
 	if cached != nil {
@@ -502,11 +505,11 @@ func (i *Index) Get(key []byte) (Block, bool, error) {
 	} else {
 		records, err = i.readDiskBuckets(bucket, indexOffset, recordListSize)
 		if err != nil {
-			return Block{}, false, err
+			return types.Block{}, false, err
 		}
 	}
 	if records == nil {
-		return Block{}, false, nil
+		return types.Block{}, false, nil
 	}
 
 	// The key doesn't need the prefix that was used to find the right bucket. For simplicty
@@ -517,7 +520,7 @@ func (i *Index) Get(key []byte) (Block, bool, error) {
 	return fileOffset, found, nil
 }
 
-func (i *Index) Flush() (Work, error) {
+func (i *Index) Flush() (types.Work, error) {
 	return i.commit()
 }
 
@@ -538,7 +541,7 @@ func (i *Index) Close() error {
 	return i.file.Close()
 }
 
-func (i *Index) OutstandingWork() Work {
+func (i *Index) OutstandingWork() types.Work {
 	i.bucketLk.RLock()
 	defer i.bucketLk.RUnlock()
 	return i.outstandingWork
@@ -552,19 +555,19 @@ type IndexIter struct {
 	// The index data we are iterating over
 	index io.Reader
 	// The current position within the index
-	pos Position
+	pos types.Position
 }
 
-func NewIndexIter(index io.Reader, pos Position) *IndexIter {
+func NewIndexIter(index io.Reader, pos types.Position) *IndexIter {
 	return &IndexIter{index, pos}
 }
 
-func (iter *IndexIter) Next() ([]byte, Position, error, bool) {
+func (iter *IndexIter) Next() ([]byte, types.Position, error, bool) {
 	size, err := ReadSizePrefix(iter.index)
 	switch err {
 	case nil:
-		pos := iter.pos + Position(SizePrefixSize)
-		iter.pos += Position(SizePrefixSize) + Position(size)
+		pos := iter.pos + types.Position(SizePrefixSize)
+		iter.pos += types.Position(SizePrefixSize) + types.Position(size)
 		data := make([]byte, size)
 		_, err := io.ReadFull(iter.index, data)
 		if err != nil {
@@ -592,7 +595,7 @@ func ReadSizePrefix(reader io.Reader) (uint32, error) {
 //
 // The bytes read include all the bytes that were read by this function. Hence it also includes
 // the 4-byte size prefix of the header besides the size of the header data itself.
-func ReadHeader(file *os.File) (Header, Position, error) {
+func ReadHeader(file *os.File) (Header, types.Position, error) {
 	headerSizeBuffer := make([]byte, SizePrefixSize)
 	_, err := io.ReadFull(file, headerSizeBuffer)
 	if err != nil {
@@ -604,7 +607,7 @@ func ReadHeader(file *os.File) (Header, Position, error) {
 	if err != nil {
 		return Header{}, 0, err
 	}
-	return FromBytes(headerBytes), Position(SizePrefixSize) + Position(headerSize), nil
+	return FromBytes(headerBytes), types.Position(SizePrefixSize) + types.Position(headerSize), nil
 }
 
 func max(a, b int) int {

@@ -1,10 +1,12 @@
-package store
+package freelist
 
 import (
 	"bufio"
 	"encoding/binary"
 	"os"
 	"sync"
+
+	"github.com/hannahhoward/go-storethehash/store/types"
 )
 
 const CIDSizePrefix = 4
@@ -13,7 +15,7 @@ const CIDSizePrefix = 4
 type FreeList struct {
 	file              *os.File
 	writer            *bufio.Writer
-	outstandingWork   Work
+	outstandingWork   types.Work
 	curPool, nextPool blockPool
 	poolLk            sync.RWMutex
 }
@@ -22,12 +24,12 @@ const blockBufferSize = 32 * 4096
 const blockPoolSize = 1024
 
 type blockPool struct {
-	blocks []Block
+	blocks []types.Block
 }
 
 func newBlockPool() blockPool {
 	return blockPool{
-		blocks: make([]Block, 0, blockPoolSize),
+		blocks: make([]types.Block, 0, blockPoolSize),
 	}
 }
 
@@ -44,18 +46,18 @@ func OpenFreeList(path string) (*FreeList, error) {
 	}, nil
 }
 
-func (cp *FreeList) Put(blk Block) error {
+func (cp *FreeList) Put(blk types.Block) error {
 	cp.poolLk.Lock()
 	defer cp.poolLk.Unlock()
 	cp.nextPool.blocks = append(cp.nextPool.blocks, blk)
 	// Offset = 8bytes + Size = 4bytes = 12 Bytes
-	cp.outstandingWork += Work(SizeBytesLen + OffBytesLen)
+	cp.outstandingWork += types.Work(types.SizeBytesLen + types.OffBytesLen)
 	return nil
 }
 
-func (cp *FreeList) flushBlock(blk Block) (Work, error) {
-	sizeBuf := make([]byte, SizeBytesLen)
-	offBuf := make([]byte, OffBytesLen)
+func (cp *FreeList) flushBlock(blk types.Block) (types.Work, error) {
+	sizeBuf := make([]byte, types.SizeBytesLen)
+	offBuf := make([]byte, types.OffBytesLen)
 	// NOTE: If Position or Size types change, this needs to change.
 	binary.LittleEndian.PutUint64(offBuf, uint64(blk.Offset))
 	binary.LittleEndian.PutUint32(sizeBuf, uint32(blk.Size))
@@ -66,10 +68,10 @@ func (cp *FreeList) flushBlock(blk Block) (Work, error) {
 	if _, err := cp.writer.Write(sizeBuf); err != nil {
 		return 0, err
 	}
-	return Work(SizeBytesLen + OffBytesLen), nil
+	return types.Work(types.SizeBytesLen + types.OffBytesLen), nil
 }
 
-func (cp *FreeList) commit() (Work, error) {
+func (cp *FreeList) commit() (types.Work, error) {
 	cp.poolLk.Lock()
 	nextPool := cp.curPool
 	cp.curPool = cp.nextPool
@@ -79,7 +81,7 @@ func (cp *FreeList) commit() (Work, error) {
 	if len(cp.curPool.blocks) == 0 {
 		return 0, nil
 	}
-	var work Work
+	var work types.Work
 	for _, record := range cp.curPool.blocks {
 		blockWork, err := cp.flushBlock(record)
 		if err != nil {
@@ -90,7 +92,7 @@ func (cp *FreeList) commit() (Work, error) {
 	return work, nil
 }
 
-func (cp *FreeList) Flush() (Work, error) {
+func (cp *FreeList) Flush() (types.Work, error) {
 	return cp.commit()
 }
 
@@ -111,7 +113,7 @@ func (cp *FreeList) Close() error {
 	return cp.file.Close()
 }
 
-func (cp *FreeList) OutstandingWork() Work {
+func (cp *FreeList) OutstandingWork() types.Work {
 	cp.poolLk.RLock()
 	defer cp.poolLk.RUnlock()
 	return cp.outstandingWork
@@ -126,17 +128,17 @@ func NewFreeListIter(reader *os.File) *FreeListIter {
 
 type FreeListIter struct {
 	reader *os.File
-	pos    Position
+	pos    types.Position
 }
 
-func (cpi *FreeListIter) Next() (*Block, error) {
-	sizeBuf := make([]byte, SizeBytesLen)
-	offBuf := make([]byte, OffBytesLen)
+func (cpi *FreeListIter) Next() (*types.Block, error) {
+	sizeBuf := make([]byte, types.SizeBytesLen)
+	offBuf := make([]byte, types.OffBytesLen)
 	_, err := cpi.reader.ReadAt(offBuf, int64(cpi.pos))
 	if err != nil {
 		return nil, err
 	}
-	cpi.pos += OffBytesLen
+	cpi.pos += types.OffBytesLen
 	offset := binary.LittleEndian.Uint64(offBuf)
 
 	_, err = cpi.reader.ReadAt(sizeBuf, int64(cpi.pos))
@@ -144,7 +146,7 @@ func (cpi *FreeListIter) Next() (*Block, error) {
 
 		return nil, err
 	}
-	cpi.pos += SizeBytesLen
+	cpi.pos += types.SizeBytesLen
 	size := binary.LittleEndian.Uint32(sizeBuf)
-	return &Block{Size: Size(size), Offset: Position(offset)}, nil
+	return &types.Block{Size: types.Size(size), Offset: types.Position(offset)}, nil
 }
