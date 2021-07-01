@@ -145,9 +145,16 @@ func (s *Store) Get(key []byte) ([]byte, bool, error) {
 		return nil, false, err
 	}
 
+	// We may be using a key that maps to the same indexKey
+	// in primary storage, so we need to check this the right way.
+	primaryKey, err = s.index.Primary.IndexKey(primaryKey)
+	if err != nil {
+		return nil, false, err
+	}
+
 	// The index stores only prefixes, hence check if the given key fully matches the
 	// key that is stored in the primary storage before returning the actual value.
-	if bytes.Compare(key, primaryKey) != 0 {
+	if bytes.Compare(indexKey, primaryKey) != 0 {
 		return nil, false, nil
 	}
 	return value, true, nil
@@ -189,9 +196,16 @@ func (s *Store) Put(key []byte, value []byte) error {
 		if err != nil {
 			return err
 		}
+		// We need to compare to the resulting indexKey for the storedKey.
+		// Two keys may point to same IndexKey (i.e. two CIDS same multihash),
+		// and they need to be treated as the same key.
+		storedKey, err = s.index.Primary.IndexKey(storedKey)
+		if err != nil {
+			return err
+		}
 	}
 
-	cmpKey := bytes.Equal(key, storedKey)
+	cmpKey := bytes.Equal(indexKey, storedKey)
 
 	if cmpKey && bytes.Equal(value, storedVal) {
 		// We are trying to put the same value in an existing key,
@@ -203,7 +217,9 @@ func (s *Store) Put(key []byte, value []byte) error {
 	}
 
 	// We are ready now to start putting/updating the value in the key.
-	// Put value in primary storage first
+	// Put value in primary storage first. In primary storage we put
+	// the key, not the indexKey. The storage knows how to manage the key
+	// under the hood while the index is primary storage-agnostic.
 	fileOffset, err := s.index.Primary.Put(key, value)
 	if err != nil {
 		return err
@@ -222,12 +238,11 @@ func (s *Store) Put(key []byte, value []byte) error {
 		if err := s.index.Update(indexKey, fileOffset); err != nil {
 			return err
 		}
-	}
-
-	// Add outdated data in primary storage to freelist
-	err = s.freelist.Put(prevOffset)
-	if err != nil {
-		return err
+		// Add outdated data in primary storage to freelist
+		err = s.freelist.Put(prevOffset)
+		if err != nil {
+			return err
+		}
 	}
 
 	now := time.Now()
