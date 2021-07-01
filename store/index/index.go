@@ -201,32 +201,18 @@ func scanIndex(path string, indexSizeBits uint8) (Buckets, SizeBuckets, error) {
 //
 // The key needs to be a cryptographically secure hash and at least 4 bytes long.
 func (i *Index) Put(key []byte, location types.Block) error {
-	if len(key) < 4 {
-		return types.ErrKeyTooShort
-	}
-
-	// Determine which bucket a key falls into. Use the first few bytes of they key for it and
-	// interpret them as a little-endian integer.
-	prefix := BucketIndex(binary.LittleEndian.Uint32(key))
-	var leadingBits BucketIndex = (1 << i.sizeBits) - 1
-	bucket := prefix & leadingBits
-	i.bucketLk.Lock()
-	defer i.bucketLk.Unlock()
-
-	// Get the index file offset of the record list the key is in.
-	cached, indexOffset, recordListSize, err := i.readBucketInfo(bucket)
+	// Get record list and bucket index
+	bucket, err := i.getBucketIndex(key)
 	if err != nil {
 		return err
 	}
-	var records RecordList
-	if cached != nil {
-		records = NewRecordListRaw(cached)
-	} else {
-		records, err = i.readDiskBuckets(bucket, indexOffset, recordListSize)
-		if err != nil {
-			return err
-		}
+	i.bucketLk.Lock()
+	defer i.bucketLk.Unlock()
+	records, err := i.getRecordsFromBucket(bucket)
+	if err != nil {
+		return err
 	}
+
 	// The key doesn't need the prefix that was used to find the right bucket. For simplicty
 	// only full bytes are trimmed off.
 	indexKey := StripBucketPrefix(key, i.sizeBits)
@@ -322,33 +308,16 @@ func (i *Index) Put(key []byte, location types.Block) error {
 
 // Update a key together with a file offset into the index.
 func (i *Index) Update(key []byte, location types.Block) error {
-	// TODO: We can probably deduplicate the code of the beginning of this
-	// function with Put and Get... it's the same.
-	if len(key) < 4 {
-		return types.ErrKeyTooShort
-	}
-
-	// Determine which bucket a key falls into. Use the first few bytes of they key for it and
-	// interpret them as a little-endian integer.
-	prefix := BucketIndex(binary.LittleEndian.Uint32(key))
-	var leadingBits BucketIndex = (1 << i.sizeBits) - 1
-	bucket := prefix & leadingBits
-	i.bucketLk.Lock()
-	defer i.bucketLk.Unlock()
-
-	// Get the index file offset of the record list the key is in.
-	cached, indexOffset, recordListSize, err := i.readBucketInfo(bucket)
+	// Get record list and bucket index
+	bucket, err := i.getBucketIndex(key)
 	if err != nil {
 		return err
 	}
-	var records RecordList
-	if cached != nil {
-		records = NewRecordListRaw(cached)
-	} else {
-		records, err = i.readDiskBuckets(bucket, indexOffset, recordListSize)
-		if err != nil {
-			return err
-		}
+	i.bucketLk.Lock()
+	defer i.bucketLk.Unlock()
+	records, err := i.getRecordsFromBucket(bucket)
+	if err != nil {
+		return err
 	}
 
 	// The key doesn't need the prefix that was used to find the right bucket. For simplicty
@@ -376,6 +345,37 @@ func (i *Index) Update(key []byte, location types.Block) error {
 	return nil
 }
 
+func (i *Index) getBucketIndex(key []byte) (BucketIndex, error) {
+	if len(key) < 4 {
+		return 0, types.ErrKeyTooShort
+	}
+
+	// Determine which bucket a key falls into. Use the first few bytes of they key for it and
+	// interpret them as a little-endian integer.
+	prefix := BucketIndex(binary.LittleEndian.Uint32(key))
+	var leadingBits BucketIndex = (1 << i.sizeBits) - 1
+	return prefix & leadingBits, nil
+}
+
+// getRecordsFromBucket returns the recordList and bucket the key belongs to.
+func (i *Index) getRecordsFromBucket(bucket BucketIndex) (RecordList, error) {
+	// Get the index file offset of the record list the key is in.
+	cached, indexOffset, recordListSize, err := i.readBucketInfo(bucket)
+	if err != nil {
+		return nil, err
+	}
+	var records RecordList
+	if cached != nil {
+		records = NewRecordListRaw(cached)
+	} else {
+		records, err = i.readDiskBuckets(bucket, indexOffset, recordListSize)
+		if err != nil {
+			return nil, err
+		}
+	}
+	return records, nil
+}
+
 func (i *Index) flushBucket(bucket BucketIndex, newData []byte) (types.Block, types.Work, error) {
 	// Write new data to disk. The record list is prefixed with bucket they are in. This is
 	// needed in order to reconstruct the in-memory buckets from the index itself.
@@ -401,7 +401,8 @@ func (i *Index) flushBucket(bucket BucketIndex, newData []byte) (types.Block, ty
 	//self.file.syncData()?;
 
 	// Keep the reference to the stored data in the bucket
-	return types.Block{length + types.Position(SizePrefixSize), types.Size(len(newData) + BucketPrefixSize)},
+	return types.Block{Offset: length + types.Position(SizePrefixSize),
+			Size: types.Size(len(newData) + BucketPrefixSize)},
 		types.Work(toWrite), nil
 }
 
@@ -484,15 +485,15 @@ func (i *Index) readDiskBuckets(bucket BucketIndex, indexOffset types.Position, 
 
 // Get the file offset in the primary storage of a key.
 func (i *Index) Get(key []byte) (types.Block, bool, error) {
-	if len(key) < 4 {
-		return types.Block{}, false, types.ErrKeyTooShort
+	// Get record list and bucket index
+	bucket, err := i.getBucketIndex(key)
+	if err != nil {
+		return types.Block{}, false, err
 	}
-	// Determine which bucket a key falls into. Use the first few bytes of they key for it and
-	// interpret them as a little-endian integer.
-	prefix := BucketIndex(binary.LittleEndian.Uint32(key))
-	var leadingBits BucketIndex = (1 << i.sizeBits) - 1
-	bucket := prefix & leadingBits
 
+	// Here we just nead an RLock, there won't be changes over buckets.
+	// This is why we don't use getRecordsFromBuckets to wrap only this
+	// line of code in the lock
 	i.bucketLk.RLock()
 	cached, indexOffset, recordListSize, err := i.readBucketInfo(bucket)
 	i.bucketLk.RUnlock()

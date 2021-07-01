@@ -84,7 +84,7 @@ func TestParallelism(t *testing.T) {
 				for i := 0; i < 500; i++ {
 					blk := newBlks[rand.Intn(len(newBlks))]
 					if err := bs.Put(blk); err != nil && !errors.Is(err, types.ErrKeyExists) {
-						t.Logf("Failed to insert: %v\n", err)
+						t.Logf("Failed to insert cid %v: %v\n", blk.Cid().String(), err)
 						outputErrors <- err
 						return
 					}

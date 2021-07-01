@@ -9,6 +9,7 @@ import (
 	store "github.com/hannahhoward/go-storethehash/store"
 	cidprimary "github.com/hannahhoward/go-storethehash/store/primary/cid"
 	"github.com/hannahhoward/go-storethehash/store/testutil"
+	"github.com/hannahhoward/go-storethehash/store/types"
 	"github.com/stretchr/testify/require"
 )
 
@@ -25,11 +26,7 @@ func initStore(t *testing.T) (*store.Store, error) {
 	if err != nil {
 		return nil, err
 	}
-	store, err := store.OpenStore(indexPath, primary, defaultIndexSizeBits, defaultSyncInterval, defaultBurstRate)
-	if err != nil {
-		return nil, err
-	}
-	return store, nil
+	return store.OpenStore(indexPath, primary, defaultIndexSizeBits, defaultSyncInterval, defaultBurstRate)
 }
 
 func TestUpdate(t *testing.T) {
@@ -55,7 +52,7 @@ func TestUpdate(t *testing.T) {
 
 	t.Logf("Overwrite same key with same value")
 	err = s.Put(blks[0].Cid().Bytes(), blks[1].RawData())
-	require.NoError(t, err)
+	require.Error(t, err, types.ErrKeyExists.Error())
 	value, found, err = s.Get(blks[0].Cid().Bytes())
 	require.NoError(t, err)
 	require.True(t, found)

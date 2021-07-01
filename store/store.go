@@ -191,12 +191,15 @@ func (s *Store) Put(key []byte, value []byte) error {
 		}
 	}
 
-	if bytes.Compare(key, storedKey)+bytes.Compare(value, storedVal) == 0 {
+	cmpKey := bytes.Equal(key, storedKey)
+
+	if cmpKey && bytes.Equal(value, storedVal) {
 		// We are trying to put the same value in an existing key,
 		// we can directly return
 		// NOTE: How many times is going to happen this. Can we save ourselves
-		// this step? We can't in the case of the blockstore.
-		return nil
+		// this step? We can't in the case of the blockstore and that is why we
+		// return an ErrKeyExists.
+		return types.ErrKeyExists
 	}
 
 	// We are ready now to start putting/updating the value in the key.
@@ -208,14 +211,14 @@ func (s *Store) Put(key []byte, value []byte) error {
 
 	// If the key being set is not found, or the stored key is not equal
 	// (even if same prefix is shared @index), we put the key without updates
-	if !found || bytes.Compare(key, storedKey) != 0 {
+	if !found || !cmpKey {
 		if err := s.index.Put(indexKey, fileOffset); err != nil {
 			return err
 		}
-	}
-	// If the key exists and the one stored is the one we are trying
-	// to put this is an update.
-	if found && bytes.Compare(key, storedKey) == 0 {
+	} else {
+		// If the key exists and the one stored is the one we are trying
+		// to put this is an update.
+		// if found && bytes.Compare(key, storedKey) == 0 {
 		if err := s.index.Update(indexKey, fileOffset); err != nil {
 			return err
 		}

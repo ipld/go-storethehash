@@ -86,15 +86,15 @@ func (rl RecordList) FindKeyPosition(key []byte) (pos int, prev Record, hasPrev 
 // new key.
 func (rl RecordList) PutKeys(keys []KeyPositionPair, start int, end int) []byte {
 	newKeys := make([]byte, 0,
-		int(len(rl))-(end-start)+
+		len(rl)-(end-start)+
 			// Each key might have a different size, so just allocate an arbitrary size to
 			// prevent more allocations. I picked 32 bytes as I don't expect hashes (hence
 			// keys) to be bigger that that
-			(int(len(keys))*(KeySizeBytes+FileOffsetBytes+FileSizeBytes+32)))
+			(len(keys))*(KeySizeBytes+FileOffsetBytes+FileSizeBytes+32))
 	newKeys = append(newKeys, rl[:start]...)
 	// Adding new keys to the beginning of the list.
-	for _, key := range keys {
-		newKeys = AddKeyPosition(newKeys, key)
+	for i := range keys {
+		newKeys = AddKeyPosition(newKeys, keys[i])
 	}
 	return append(newKeys, rl[end:]...)
 }
@@ -129,21 +129,23 @@ func (rl RecordList) Get(key []byte) (types.Block, bool) {
 // GetRecord returns the full record for a key in the recordList
 func (rl RecordList) GetRecord(key []byte) *Record {
 	// Several prefixes can match a `key`, we are only interested in the last one that
-	// matches, hence keep a match around until we can be sure it's the last one.
+	// matches
+	var r *Record
 	rli := &RecordListIter{rl, 0}
 	for !rli.Done() {
 		record := rli.Next()
 		// The stored prefix of the key needs to match the requested key.
 		if bytes.HasPrefix(key, record.Key) {
-			return &record
+			r = &record
 		} else if bytes.Compare(record.Key, key) == 1 {
 			// No keys from here on can possibly match, hence stop iterating. If we had a prefix
-			// match, return that, else return none
+			// match, return that, else return nil
 			break
 		}
 	}
 
-	return nil
+	// Return the record with larger match with prefix.
+	return r
 }
 
 // ReadRecord reads  a record from a slice at the givem position.
@@ -155,8 +157,8 @@ func (rl RecordList) ReadRecord(pos int) Record {
 	return Record{
 		pos,
 		KeyPositionPair{rl[sizeOffset+KeySizeBytes : sizeOffset+KeySizeBytes+int(size)], types.Block{
-			types.Position(binary.LittleEndian.Uint64(rl[pos:])),
-			types.Size(binary.LittleEndian.Uint32(rl[pos+FileOffsetBytes:])),
+			Offset: types.Position(binary.LittleEndian.Uint64(rl[pos:])),
+			Size:   types.Size(binary.LittleEndian.Uint32(rl[pos+FileOffsetBytes:])),
 		}},
 	}
 }
