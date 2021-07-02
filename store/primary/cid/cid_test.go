@@ -7,9 +7,9 @@ import (
 	"path/filepath"
 	"testing"
 
-	store "github.com/hannahhoward/go-storethehash/internal"
-	cidprimary "github.com/hannahhoward/go-storethehash/internal/primary/cid"
-	"github.com/hannahhoward/go-storethehash/internal/testutil"
+	cidprimary "github.com/hannahhoward/go-storethehash/store/primary/cid"
+	"github.com/hannahhoward/go-storethehash/store/testutil"
+	"github.com/hannahhoward/go-storethehash/store/types"
 	blocks "github.com/ipfs/go-block-format"
 	"github.com/ipfs/go-cid"
 	"github.com/stretchr/testify/require"
@@ -26,21 +26,21 @@ func TestIndexPut(t *testing.T) {
 	require.NoError(t, err)
 
 	blks := testutil.GenerateBlocksOfSize(5, 100)
-	expectedOffset := store.Position(0)
+	expectedOffset := types.Position(0)
 	for _, blk := range blks {
 		expectedSize := len(blk.Cid().Bytes()) + len(blk.RawData())
 		loc, err := primaryStorage.Put(blk.Cid().Bytes(), blk.RawData())
 		require.NoError(t, err)
 		require.Equal(t, expectedOffset, loc.Offset)
-		require.Equal(t, store.Size(expectedSize), loc.Size)
-		expectedOffset += cidprimary.CIDSizePrefix + store.Position(expectedSize)
+		require.Equal(t, types.Size(expectedSize), loc.Size)
+		expectedOffset += cidprimary.CIDSizePrefix + types.Position(expectedSize)
 	}
 
 	outstandingWork := primaryStorage.OutstandingWork()
-	require.Equal(t, store.Work(expectedOffset), outstandingWork)
+	require.Equal(t, types.Work(expectedOffset), outstandingWork)
 	work, err := primaryStorage.Flush()
 	require.NoError(t, err)
-	require.Equal(t, store.Work(expectedOffset), work)
+	require.Equal(t, types.Work(expectedOffset), work)
 	err = primaryStorage.Sync()
 	require.NoError(t, err)
 
@@ -69,7 +69,7 @@ func TestIndexGetEmptyIndex(t *testing.T) {
 	primaryStorage, err := cidprimary.OpenCIDPrimary(primaryPath)
 	require.NoError(t, err)
 
-	key, value, err := primaryStorage.Get(store.Block{
+	key, value, err := primaryStorage.Get(types.Block{
 		Offset: 0,
 		Size:   50,
 	})
@@ -87,7 +87,7 @@ func TestIndexGet(t *testing.T) {
 
 	// load blocks
 	blks := testutil.GenerateBlocksOfSize(5, 100)
-	var locs []store.Block
+	var locs []types.Block
 	for _, blk := range blks {
 		loc, err := primaryStorage.Put(blk.Cid().Bytes(), blk.RawData())
 		require.NoError(t, err)

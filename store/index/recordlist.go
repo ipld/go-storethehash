@@ -1,9 +1,11 @@
-package store
+package index
 
 import (
 	"bytes"
 	"encoding/binary"
 	"io"
+
+	"github.com/hannahhoward/go-storethehash/store/types"
 )
 
 // BucketPrefixSize is how many bytes of bucket prefixes are stored.
@@ -23,7 +25,7 @@ const KeySizeBytes int = 1
 type KeyPositionPair struct {
 	Key []byte
 	// The file offset where the full key and its value is actually stored.
-	Block Block
+	Block types.Block
 }
 
 // Record is a KeyPositionPair plus the actual position of the record in the record list
@@ -77,21 +79,22 @@ func (rl RecordList) FindKeyPosition(key []byte) (pos int, prev Record, hasPrev 
 // PutKeys puts keys at a certain position and returns the new data
 //
 // This method puts a continuous range of keys inside the data structure. The given range
-// is where it is put. This means that you can also override existing keys.
+// is where it is put. *This means that you can also overwrite existing keys.*
 //
 // This is needed if you insert a new key that fully contains an existing key. The existing
 // key needs to replaced by one with a larger prefix, so that it is distinguishable from the
 // new key.
 func (rl RecordList) PutKeys(keys []KeyPositionPair, start int, end int) []byte {
 	newKeys := make([]byte, 0,
-		int(len(rl))-(end-start)+
+		len(rl)-(end-start)+
 			// Each key might have a different size, so just allocate an arbitrary size to
 			// prevent more allocations. I picked 32 bytes as I don't expect hashes (hence
 			// keys) to be bigger that that
-			(int(len(keys))*(KeySizeBytes+FileOffsetBytes+FileSizeBytes+32)))
+			(len(keys))*(KeySizeBytes+FileOffsetBytes+FileSizeBytes+32))
 	newKeys = append(newKeys, rl[:start]...)
-	for _, key := range keys {
-		newKeys = AddKeyPosition(newKeys, key)
+	// Adding new keys to the beginning of the list.
+	for i := range keys {
+		newKeys = AddKeyPosition(newKeys, keys[i])
 	}
 	return append(newKeys, rl[end:]...)
 }
@@ -101,11 +104,11 @@ func (rl RecordList) PutKeys(keys []KeyPositionPair, start int, end int) []byte 
 // As the index is only storing prefixes and not the actual keys, the returned offset might
 // match, it's not guaranteed. Once the key is retieved from the primary storage it needs to
 // be checked if it actually matches.
-func (rl RecordList) Get(key []byte) (Block, bool) {
+func (rl RecordList) Get(key []byte) (types.Block, bool) {
 	// Several prefixes can match a `key`, we are only interested in the last one that
 	// matches, hence keep a match around until we can be sure it's the last one.
 	rli := &RecordListIter{rl, 0}
-	var blk Block
+	var blk types.Block
 	var matched bool
 	for !rli.Done() {
 		record := rli.Next()
@@ -123,6 +126,28 @@ func (rl RecordList) Get(key []byte) (Block, bool) {
 	return blk, matched
 }
 
+// GetRecord returns the full record for a key in the recordList
+func (rl RecordList) GetRecord(key []byte) *Record {
+	// Several prefixes can match a `key`, we are only interested in the last one that
+	// matches
+	var r *Record
+	rli := &RecordListIter{rl, 0}
+	for !rli.Done() {
+		record := rli.Next()
+		// The stored prefix of the key needs to match the requested key.
+		if bytes.HasPrefix(key, record.Key) {
+			r = &record
+		} else if bytes.Compare(record.Key, key) == 1 {
+			// No keys from here on can possibly match, hence stop iterating. If we had a prefix
+			// match, return that, else return nil
+			break
+		}
+	}
+
+	// Return the record with larger match with prefix.
+	return r
+}
+
 // ReadRecord reads  a record from a slice at the givem position.
 //
 // The given position must point to the first byte where the record starts.
@@ -131,9 +156,9 @@ func (rl RecordList) ReadRecord(pos int) Record {
 	size := rl[int(sizeOffset)]
 	return Record{
 		pos,
-		KeyPositionPair{rl[sizeOffset+KeySizeBytes : sizeOffset+KeySizeBytes+int(size)], Block{
-			Position(binary.LittleEndian.Uint64(rl[pos:])),
-			Size(binary.LittleEndian.Uint32(rl[pos+FileOffsetBytes:])),
+		KeyPositionPair{rl[sizeOffset+KeySizeBytes : sizeOffset+KeySizeBytes+int(size)], types.Block{
+			Offset: types.Position(binary.LittleEndian.Uint64(rl[pos:])),
+			Size:   types.Size(binary.LittleEndian.Uint32(rl[pos+FileOffsetBytes:])),
 		}},
 	}
 }
@@ -172,6 +197,11 @@ func (rli *RecordListIter) Next() Record {
 	// Prepare the internal state for the next call
 	rli.pos += FileOffsetBytes + FileSizeBytes + KeySizeBytes + len(record.Key)
 	return record
+}
+
+// NextPos returns the position of the next record.
+func (r *Record) NextPos() int {
+	return r.Pos + FileOffsetBytes + FileSizeBytes + KeySizeBytes + len(r.Key)
 }
 
 // AddKeyPosition extends record data with an encoded key and a file offset.

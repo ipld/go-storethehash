@@ -1,4 +1,6 @@
-package store
+package index
+
+import "github.com/hannahhoward/go-storethehash/store/types"
 
 // BucketIndex is an index to a bucket
 type BucketIndex uint32
@@ -7,29 +9,29 @@ type BucketIndex uint32
 //
 // The generic specifies how many bits are used to create the buckets. The number of buckets is
 // 2 ^ bits.
-type Buckets []Position
+type Buckets []types.Position
 
 // NewBuckets returns a list of buckets for the given index size in bits
 func NewBuckets(indexSizeBits uint8) (Buckets, error) {
 	if indexSizeBits > 32 {
-		return nil, ErrIndexTooLarge
+		return nil, types.ErrIndexTooLarge
 	}
 	return make(Buckets, 1<<indexSizeBits, 1<<indexSizeBits), nil
 }
 
 // Put updates a bucket value
-func (b Buckets) Put(index BucketIndex, offset Position) error {
+func (b Buckets) Put(index BucketIndex, offset types.Position) error {
 	if int(index) > len(b)-1 {
-		return ErrOutOfBounds
+		return types.ErrOutOfBounds
 	}
 	b[int(index)] = offset
 	return nil
 }
 
 // Get updates returns the value at the given index
-func (b Buckets) Get(index BucketIndex) (Position, error) {
+func (b Buckets) Get(index BucketIndex) (types.Position, error) {
 	if int(index) > len(b)-1 {
-		return 0, ErrOutOfBounds
+		return 0, types.ErrOutOfBounds
 	}
 	return b[int(index)], nil
 }
@@ -38,29 +40,29 @@ func (b Buckets) Get(index BucketIndex) (Position, error) {
 //
 // The generic specifies how many bits are used to create the buckets. The number of buckets is
 // 2 ^ bits.
-type SizeBuckets []Size
+type SizeBuckets []types.Size
 
 // NewBuckets returns a list of buckets for the given index size in bits
 func NewSizeBuckets(indexSizeBits uint8) (SizeBuckets, error) {
 	if indexSizeBits > 32 {
-		return nil, ErrIndexTooLarge
+		return nil, types.ErrIndexTooLarge
 	}
 	return make(SizeBuckets, 1<<indexSizeBits, 1<<indexSizeBits), nil
 }
 
 // Put updates a bucket value
-func (b SizeBuckets) Put(index BucketIndex, offset Size) error {
+func (b SizeBuckets) Put(index BucketIndex, offset types.Size) error {
 	if int(index) > len(b)-1 {
-		return ErrOutOfBounds
+		return types.ErrOutOfBounds
 	}
 	b[int(index)] = offset
 	return nil
 }
 
 // Get updates returns the value at the given index
-func (b SizeBuckets) Get(index BucketIndex) (Size, error) {
+func (b SizeBuckets) Get(index BucketIndex) (types.Size, error) {
 	if int(index) > len(b)-1 {
-		return 0, ErrOutOfBounds
+		return 0, types.ErrOutOfBounds
 	}
 	return b[int(index)], nil
 }

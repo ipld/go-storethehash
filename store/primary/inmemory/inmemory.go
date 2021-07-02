@@ -3,7 +3,8 @@ package inmemory
 import (
 	"io"
 
-	store "github.com/hannahhoward/go-storethehash/internal"
+	"github.com/hannahhoward/go-storethehash/store/primary"
+	"github.com/hannahhoward/go-storethehash/store/types"
 )
 
 //! In-memory primary storage implementation.
@@ -17,22 +18,22 @@ func NewInmemory(data [][2][]byte) *InMemory {
 	return &value
 }
 
-func (im *InMemory) Get(blk store.Block) (key []byte, value []byte, err error) {
+func (im *InMemory) Get(blk types.Block) (key []byte, value []byte, err error) {
 	max := len(*im)
-	if blk.Offset >= store.Position(max) {
-		return nil, nil, store.ErrOutOfBounds
+	if blk.Offset >= types.Position(max) {
+		return nil, nil, types.ErrOutOfBounds
 	}
 	val := (*im)[blk.Offset]
 	return val[0], val[1], nil
 }
 
-func (im *InMemory) Put(key []byte, value []byte) (blk store.Block, err error) {
+func (im *InMemory) Put(key []byte, value []byte) (blk types.Block, err error) {
 	pos := len(*im)
 	*im = append(*im, [2][]byte{key, value})
-	return store.Block{Offset: store.Position(pos), Size: 1}, nil
+	return types.Block{Offset: types.Position(pos), Size: 1}, nil
 }
 
-func (im *InMemory) Flush() (store.Work, error) {
+func (im *InMemory) Flush() (types.Work, error) {
 	return 0, nil
 }
 
@@ -44,7 +45,7 @@ func (im *InMemory) Close() error {
 	return nil
 }
 
-func (im *InMemory) OutstandingWork() store.Work {
+func (im *InMemory) OutstandingWork() types.Work {
 	return 0
 }
 
@@ -52,7 +53,7 @@ func (im *InMemory) IndexKey(key []byte) ([]byte, error) {
 	return key, nil
 }
 
-func (im *InMemory) GetIndexKey(blk store.Block) ([]byte, error) {
+func (im *InMemory) GetIndexKey(blk types.Block) ([]byte, error) {
 	key, _, err := im.Get(blk)
 	if err != nil {
 		return nil, err
@@ -60,7 +61,7 @@ func (im *InMemory) GetIndexKey(blk store.Block) ([]byte, error) {
 	return im.IndexKey(key)
 }
 
-func (im *InMemory) Iter() (store.PrimaryStorageIter, error) {
+func (im *InMemory) Iter() (primary.PrimaryStorageIter, error) {
 	return &inMemoryIter{im, 0}, nil
 }
 
@@ -70,12 +71,12 @@ type inMemoryIter struct {
 }
 
 func (imi *inMemoryIter) Next() ([]byte, []byte, error) {
-	key, value, err := imi.im.Get(store.Block{Offset: store.Position(imi.idx)})
-	if err == store.ErrOutOfBounds {
+	key, value, err := imi.im.Get(types.Block{Offset: types.Position(imi.idx)})
+	if err == types.ErrOutOfBounds {
 		return nil, nil, io.EOF
 	}
 	imi.idx++
 	return key, value, nil
 }
 
-var _ store.PrimaryStorage = &InMemory{}
+var _ primary.PrimaryStorage = &InMemory{}

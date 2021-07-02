@@ -7,11 +7,11 @@ import (
 	"os"
 	"sync"
 
+	"github.com/hannahhoward/go-storethehash/store/primary"
+	"github.com/hannahhoward/go-storethehash/store/types"
 	"github.com/ipfs/go-cid"
 	util "github.com/ipld/go-car/util"
 	"github.com/multiformats/go-multihash"
-
-	store "github.com/hannahhoward/go-storethehash/internal"
 )
 
 const CIDSizePrefix = 4
@@ -20,8 +20,8 @@ const CIDSizePrefix = 4
 type CIDPrimary struct {
 	file              *os.File
 	writer            *bufio.Writer
-	length            store.Position
-	outstandingWork   store.Work
+	length            types.Position
+	outstandingWork   types.Work
 	curPool, nextPool blockPool
 	poolLk            sync.RWMutex
 }
@@ -34,13 +34,13 @@ type blockRecord struct {
 	value []byte
 }
 type blockPool struct {
-	refs   map[store.Block]int
+	refs   map[types.Block]int
 	blocks []blockRecord
 }
 
 func newBlockPool() blockPool {
 	return blockPool{
-		refs:   make(map[store.Block]int, blockPoolSize),
+		refs:   make(map[types.Block]int, blockPoolSize),
 		blocks: make([]blockRecord, 0, blockPoolSize),
 	}
 }
@@ -57,13 +57,13 @@ func OpenCIDPrimary(path string) (*CIDPrimary, error) {
 	return &CIDPrimary{
 		file:     file,
 		writer:   bufio.NewWriterSize(file, blockBufferSize),
-		length:   store.Position(length),
+		length:   types.Position(length),
 		curPool:  newBlockPool(),
 		nextPool: newBlockPool(),
 	}, nil
 }
 
-func (cp *CIDPrimary) getCached(blk store.Block) ([]byte, []byte, error) {
+func (cp *CIDPrimary) getCached(blk types.Block) ([]byte, []byte, error) {
 	cp.poolLk.RLock()
 	defer cp.poolLk.RUnlock()
 	idx, ok := cp.nextPool.refs[blk]
@@ -77,12 +77,12 @@ func (cp *CIDPrimary) getCached(blk store.Block) ([]byte, []byte, error) {
 		return br.key, br.value, nil
 	}
 	if blk.Offset >= cp.length {
-		return nil, nil, store.ErrOutOfBounds
+		return nil, nil, types.ErrOutOfBounds
 	}
 	return nil, nil, nil
 }
 
-func (cp *CIDPrimary) Get(blk store.Block) (key []byte, value []byte, err error) {
+func (cp *CIDPrimary) Get(blk types.Block) (key []byte, value []byte, err error) {
 	key, value, err = cp.getCached(blk)
 	if err != nil {
 		return
@@ -96,6 +96,7 @@ func (cp *CIDPrimary) Get(blk store.Block) (key []byte, value []byte, err error)
 	return c.Bytes(), value, err
 }
 
+// readNode extracts the Cid from the data read and splits key and value.
 func readNode(data []byte) (cid.Cid, []byte, error) {
 	c, n, err := util.ReadCid(data)
 	if err != nil {
@@ -105,20 +106,20 @@ func readNode(data []byte) (cid.Cid, []byte, error) {
 	return c, data[n:], nil
 }
 
-func (cp *CIDPrimary) Put(key []byte, value []byte) (store.Block, error) {
+func (cp *CIDPrimary) Put(key []byte, value []byte) (types.Block, error) {
 	cp.poolLk.Lock()
 	defer cp.poolLk.Unlock()
 	length := cp.length
 	size := len(key) + len(value)
-	cp.length += CIDSizePrefix + store.Position(size)
-	blk := store.Block{Offset: length, Size: store.Size(size)}
+	cp.length += CIDSizePrefix + types.Position(size)
+	blk := types.Block{Offset: length, Size: types.Size(size)}
 	cp.nextPool.refs[blk] = len(cp.nextPool.blocks)
 	cp.nextPool.blocks = append(cp.nextPool.blocks, blockRecord{key, value})
-	cp.outstandingWork += store.Work(size + CIDSizePrefix)
+	cp.outstandingWork += types.Work(size + CIDSizePrefix)
 	return blk, nil
 }
 
-func (cp *CIDPrimary) flushBlock(key []byte, value []byte) (store.Work, error) {
+func (cp *CIDPrimary) flushBlock(key []byte, value []byte) (types.Work, error) {
 	size := len(key) + len(value)
 	sizeBuf := make([]byte, 4)
 	binary.LittleEndian.PutUint32(sizeBuf, uint32(size))
@@ -131,7 +132,7 @@ func (cp *CIDPrimary) flushBlock(key []byte, value []byte) (store.Work, error) {
 	if _, err := cp.writer.Write(value); err != nil {
 		return 0, err
 	}
-	return store.Work(CIDSizePrefix + size), nil
+	return types.Work(CIDSizePrefix + size), nil
 }
 
 func (cp *CIDPrimary) IndexKey(key []byte) ([]byte, error) {
@@ -147,7 +148,7 @@ func (cp *CIDPrimary) IndexKey(key []byte) ([]byte, error) {
 	return decoded.Digest, nil
 }
 
-func (cp *CIDPrimary) GetIndexKey(blk store.Block) ([]byte, error) {
+func (cp *CIDPrimary) GetIndexKey(blk types.Block) ([]byte, error) {
 	key, _, err := cp.Get(blk)
 	if err != nil {
 		return nil, err
@@ -155,7 +156,7 @@ func (cp *CIDPrimary) GetIndexKey(blk store.Block) ([]byte, error) {
 	return cp.IndexKey(key)
 }
 
-func (cp *CIDPrimary) commit() (store.Work, error) {
+func (cp *CIDPrimary) commit() (types.Work, error) {
 	cp.poolLk.Lock()
 	nextPool := cp.curPool
 	cp.curPool = cp.nextPool
@@ -165,7 +166,7 @@ func (cp *CIDPrimary) commit() (store.Work, error) {
 	if len(cp.curPool.blocks) == 0 {
 		return 0, nil
 	}
-	var work store.Work
+	var work types.Work
 	for _, record := range cp.curPool.blocks {
 		blockWork, err := cp.flushBlock(record.key, record.value)
 		if err != nil {
@@ -176,7 +177,7 @@ func (cp *CIDPrimary) commit() (store.Work, error) {
 	return work, nil
 }
 
-func (cp *CIDPrimary) Flush() (store.Work, error) {
+func (cp *CIDPrimary) Flush() (types.Work, error) {
 	return cp.commit()
 }
 
@@ -197,12 +198,12 @@ func (cp *CIDPrimary) Close() error {
 	return cp.file.Close()
 }
 
-func (cp *CIDPrimary) OutstandingWork() store.Work {
+func (cp *CIDPrimary) OutstandingWork() types.Work {
 	cp.poolLk.RLock()
 	defer cp.poolLk.RUnlock()
 	return cp.outstandingWork
 }
-func (cp *CIDPrimary) Iter() (store.PrimaryStorageIter, error) {
+func (cp *CIDPrimary) Iter() (primary.PrimaryStorageIter, error) {
 	return NewCIDPrimaryIter(cp.file), nil
 }
 
@@ -212,7 +213,7 @@ func NewCIDPrimaryIter(reader *os.File) *CIDPrimaryIter {
 
 type CIDPrimaryIter struct {
 	reader *os.File
-	pos    store.Position
+	pos    types.Position
 }
 
 func (cpi *CIDPrimaryIter) Next() ([]byte, []byte, error) {
@@ -226,7 +227,7 @@ func (cpi *CIDPrimaryIter) Next() ([]byte, []byte, error) {
 	size := binary.LittleEndian.Uint32(sizeBuff)
 	read := make([]byte, int(size))
 	_, err = cpi.reader.ReadAt(read, int64(cpi.pos))
-	cpi.pos += store.Position(size)
+	cpi.pos += types.Position(size)
 	if err != nil {
 		if err == io.EOF {
 			err = io.ErrUnexpectedEOF
@@ -237,4 +238,4 @@ func (cpi *CIDPrimaryIter) Next() ([]byte, []byte, error) {
 	return c.Bytes(), value, err
 }
 
-var _ store.PrimaryStorage = &CIDPrimary{}
+var _ primary.PrimaryStorage = &CIDPrimary{}

@@ -5,12 +5,18 @@ import (
 	"math"
 	"sync"
 	"time"
+
+	"github.com/hannahhoward/go-storethehash/store/freelist"
+	"github.com/hannahhoward/go-storethehash/store/index"
+	"github.com/hannahhoward/go-storethehash/store/primary"
+	"github.com/hannahhoward/go-storethehash/store/types"
 )
 
 const DefaultBurstRate = 4 * 1024 * 1024
 
 type Store struct {
-	index *Index
+	index    *index.Index
+	freelist *freelist.FreeList
 
 	stateLk sync.RWMutex
 	open    bool
@@ -19,21 +25,26 @@ type Store struct {
 
 	rateLk    sync.RWMutex
 	rate      float64 // rate at which data can be flushed
-	burstRate Work
+	burstRate types.Work
 	lastFlush time.Time
 
 	closing      chan struct{}
 	syncInterval time.Duration
 }
 
-func OpenStore(path string, primary PrimaryStorage, indexSizeBits uint8, syncInterval time.Duration, burstRate Work) (*Store, error) {
-	index, err := OpenIndex(path, primary, indexSizeBits)
+func OpenStore(path string, primary primary.PrimaryStorage, indexSizeBits uint8, syncInterval time.Duration, burstRate types.Work) (*Store, error) {
+	index, err := index.OpenIndex(path, primary, indexSizeBits)
+	if err != nil {
+		return nil, err
+	}
+	freelist, err := freelist.OpenFreeList(path + ".free")
 	if err != nil {
 		return nil, err
 	}
 	store := &Store{
 		lastFlush:    time.Now(),
 		index:        index,
+		freelist:     freelist,
 		open:         true,
 		running:      false,
 		syncInterval: syncInterval,
@@ -134,9 +145,16 @@ func (s *Store) Get(key []byte) ([]byte, bool, error) {
 		return nil, false, err
 	}
 
+	// We may be using a key that maps to the same indexKey
+	// in primary storage, so we need to check this the right way.
+	primaryKey, err = s.index.Primary.IndexKey(primaryKey)
+	if err != nil {
+		return nil, false, err
+	}
+
 	// The index stores only prefixes, hence check if the given key fully matches the
 	// key that is stored in the primary storage before returning the actual value.
-	if bytes.Compare(key, primaryKey) != 0 {
+	if bytes.Compare(indexKey, primaryKey) != 0 {
 		return nil, false, nil
 	}
 	return value, true, nil
@@ -159,30 +177,79 @@ func (s *Store) Put(key []byte, value []byte) error {
 		return err
 	}
 
-	has, err := s.Has(key)
-	if err != nil {
-		return err
-	}
-	// we assume that a second put should NOT write twice
-	// the reason is we are assuming the key is the immutable hash for the value
-	if has {
-		return ErrKeyExists
-	}
-	fileOffset, err := s.index.Primary.Put(key, value)
-	if err != nil {
-		return err
-	}
+	// Get the key in primary storage
 	indexKey, err := s.index.Primary.IndexKey(key)
 	if err != nil {
 		return err
 	}
-	if err := s.index.Put(indexKey, fileOffset); err != nil {
+	// See if the key already exists and get offset
+	prevOffset, found, err := s.index.Get(indexKey)
+	if err != nil {
 		return err
 	}
+	// If found get the key and value stored in primary to see if it is the same
+	// (index only stores prefixes)
+	var storedKey []byte
+	var storedVal []byte
+	if found {
+		storedKey, storedVal, err = s.index.Primary.Get(prevOffset)
+		if err != nil {
+			return err
+		}
+		// We need to compare to the resulting indexKey for the storedKey.
+		// Two keys may point to same IndexKey (i.e. two CIDS same multihash),
+		// and they need to be treated as the same key.
+		storedKey, err = s.index.Primary.IndexKey(storedKey)
+		if err != nil {
+			return err
+		}
+	}
+
+	cmpKey := bytes.Equal(indexKey, storedKey)
+
+	if cmpKey && bytes.Equal(value, storedVal) {
+		// We are trying to put the same value in an existing key,
+		// we can directly return
+		// NOTE: How many times is going to happen this. Can we save ourselves
+		// this step? We can't in the case of the blockstore and that is why we
+		// return an ErrKeyExists.
+		return types.ErrKeyExists
+	}
+
+	// We are ready now to start putting/updating the value in the key.
+	// Put value in primary storage first. In primary storage we put
+	// the key, not the indexKey. The storage knows how to manage the key
+	// under the hood while the index is primary storage-agnostic.
+	fileOffset, err := s.index.Primary.Put(key, value)
+	if err != nil {
+		return err
+	}
+
+	// If the key being set is not found, or the stored key is not equal
+	// (even if same prefix is shared @index), we put the key without updates
+	if !found || !cmpKey {
+		if err := s.index.Put(indexKey, fileOffset); err != nil {
+			return err
+		}
+	} else {
+		// If the key exists and the one stored is the one we are trying
+		// to put this is an update.
+		// if found && bytes.Compare(key, storedKey) == 0 {
+		if err := s.index.Update(indexKey, fileOffset); err != nil {
+			return err
+		}
+		// Add outdated data in primary storage to freelist
+		err = s.freelist.Put(prevOffset)
+		if err != nil {
+			return err
+		}
+	}
+
 	now := time.Now()
 	s.rateLk.Lock()
 	elapsed := now.Sub(s.lastFlush)
-	work := s.index.OutstandingWork() + s.index.Primary.OutstandingWork() // TODO: move this calculation into Pool
+	// TODO: move this Outstanding calculation into Pool?
+	work := s.index.OutstandingWork() + s.index.Primary.OutstandingWork() + s.freelist.OutstandingWork()
 	rate := math.Ceil(float64(work) / elapsed.Seconds())
 	sleep := s.rate > 0 && rate > s.rate && work > s.burstRate
 	s.rateLk.Unlock()
@@ -194,7 +261,7 @@ func (s *Store) Put(key []byte, value []byte) error {
 	return nil
 }
 
-func (s *Store) commit() (Work, error) {
+func (s *Store) commit() (types.Work, error) {
 
 	primaryWork, err := s.index.Primary.Flush()
 	if err != nil {
@@ -237,7 +304,7 @@ func (s *Store) Flush() {
 	s.rateLk.Lock()
 	elapsed := now.Sub(s.lastFlush)
 	rate := math.Ceil(float64(work) / elapsed.Seconds())
-	if work > Work(s.burstRate) {
+	if work > types.Work(s.burstRate) {
 		s.rate = rate
 	}
 	s.rateLk.Unlock()
@@ -267,7 +334,7 @@ func (s *Store) Has(key []byte) (bool, error) {
 	return bytes.Compare(indexKey, primaryIndexKey) == 0, nil
 }
 
-func (s *Store) GetSize(key []byte) (Size, bool, error) {
+func (s *Store) GetSize(key []byte) (types.Size, bool, error) {
 	indexKey, err := s.index.Primary.IndexKey(key)
 	if err != nil {
 		return 0, false, err
@@ -291,5 +358,5 @@ func (s *Store) GetSize(key []byte) (Size, bool, error) {
 	if bytes.Compare(indexKey, primaryIndexKey) != 0 {
 		return 0, false, nil
 	}
-	return blk.Size - Size(len(key)), true, nil
+	return blk.Size - types.Size(len(key)), true, nil
 }
