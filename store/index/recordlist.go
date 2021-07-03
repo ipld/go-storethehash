@@ -5,7 +5,7 @@ import (
 	"encoding/binary"
 	"io"
 
-	"github.com/hannahhoward/go-storethehash/store/types"
+	"github.com/ipld/go-storethehash/store/types"
 )
 
 // BucketPrefixSize is how many bytes of bucket prefixes are stored.

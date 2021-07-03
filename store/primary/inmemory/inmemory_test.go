@@ -3,8 +3,8 @@ package inmemory_test
 import (
 	"testing"
 
-	"github.com/hannahhoward/go-storethehash/store/primary/inmemory"
-	"github.com/hannahhoward/go-storethehash/store/types"
+	"github.com/ipld/go-storethehash/store/primary/inmemory"
+	"github.com/ipld/go-storethehash/store/types"
 	"github.com/stretchr/testify/require"
 )
 

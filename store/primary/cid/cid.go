@@ -7,10 +7,10 @@ import (
 	"os"
 	"sync"
 
-	"github.com/hannahhoward/go-storethehash/store/primary"
-	"github.com/hannahhoward/go-storethehash/store/types"
 	"github.com/ipfs/go-cid"
 	util "github.com/ipld/go-car/util"
+	"github.com/ipld/go-storethehash/store/primary"
+	"github.com/ipld/go-storethehash/store/types"
 	"github.com/multiformats/go-multihash"
 )
 

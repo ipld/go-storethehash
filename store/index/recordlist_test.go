@@ -4,8 +4,8 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/hannahhoward/go-storethehash/store/index"
-	"github.com/hannahhoward/go-storethehash/store/types"
+	"github.com/ipld/go-storethehash/store/index"
+	"github.com/ipld/go-storethehash/store/types"
 	"github.com/stretchr/testify/require"
 )
 

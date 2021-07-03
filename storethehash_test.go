@@ -10,10 +10,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/hannahhoward/go-storethehash"
-	"github.com/hannahhoward/go-storethehash/store/testutil"
-	"github.com/hannahhoward/go-storethehash/store/types"
 	bstore "github.com/ipfs/go-ipfs-blockstore"
+	"github.com/ipld/go-storethehash"
+	"github.com/ipld/go-storethehash/store/testutil"
+	"github.com/ipld/go-storethehash/store/types"
 	"github.com/stretchr/testify/require"
 )
 
