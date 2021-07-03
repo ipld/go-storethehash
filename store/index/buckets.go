@@ -1,6 +1,6 @@
 package index
 
-import "github.com/hannahhoward/go-storethehash/store/types"
+import "github.com/ipld/go-storethehash/store/types"
 
 // BucketIndex is an index to a bucket
 type BucketIndex uint32

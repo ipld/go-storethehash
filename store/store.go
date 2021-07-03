@@ -6,10 +6,10 @@ import (
 	"sync"
 	"time"
 
-	"github.com/hannahhoward/go-storethehash/store/freelist"
-	"github.com/hannahhoward/go-storethehash/store/index"
-	"github.com/hannahhoward/go-storethehash/store/primary"
-	"github.com/hannahhoward/go-storethehash/store/types"
+	"github.com/ipld/go-storethehash/store/freelist"
+	"github.com/ipld/go-storethehash/store/index"
+	"github.com/ipld/go-storethehash/store/primary"
+	"github.com/ipld/go-storethehash/store/types"
 )
 
 const DefaultBurstRate = 4 * 1024 * 1024

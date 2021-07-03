@@ -9,8 +9,8 @@ import (
 	"os"
 	"sync"
 
-	"github.com/hannahhoward/go-storethehash/store/primary"
-	"github.com/hannahhoward/go-storethehash/store/types"
+	"github.com/ipld/go-storethehash/store/primary"
+	"github.com/ipld/go-storethehash/store/types"
 )
 
 /* An append-only log [`recordlist`]s.

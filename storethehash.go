@@ -4,12 +4,12 @@ import (
 	"context"
 	"time"
 
-	store "github.com/hannahhoward/go-storethehash/store"
-	cidprimary "github.com/hannahhoward/go-storethehash/store/primary/cid"
-	"github.com/hannahhoward/go-storethehash/store/types"
 	blocks "github.com/ipfs/go-block-format"
 	"github.com/ipfs/go-cid"
 	bstore "github.com/ipfs/go-ipfs-blockstore"
+	store "github.com/ipld/go-storethehash/store"
+	cidprimary "github.com/ipld/go-storethehash/store/primary/cid"
+	"github.com/ipld/go-storethehash/store/types"
 )
 
 type errorType string

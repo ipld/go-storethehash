@@ -1,6 +1,6 @@
 package primary
 
-import "github.com/hannahhoward/go-storethehash/store/types"
+import "github.com/ipld/go-storethehash/store/types"
 
 // PrimaryStorage is an interface for storing and retrieving key value pairs on disk
 type PrimaryStorage interface {

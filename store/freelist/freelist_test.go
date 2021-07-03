@@ -8,8 +8,8 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/hannahhoward/go-storethehash/store/freelist"
-	"github.com/hannahhoward/go-storethehash/store/types"
+	"github.com/ipld/go-storethehash/store/freelist"
+	"github.com/ipld/go-storethehash/store/types"
 	"github.com/stretchr/testify/require"
 )
 

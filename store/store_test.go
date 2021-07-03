@@ -6,10 +6,10 @@ import (
 	"testing"
 	"time"
 
-	store "github.com/hannahhoward/go-storethehash/store"
-	cidprimary "github.com/hannahhoward/go-storethehash/store/primary/cid"
-	"github.com/hannahhoward/go-storethehash/store/testutil"
-	"github.com/hannahhoward/go-storethehash/store/types"
+	store "github.com/ipld/go-storethehash/store"
+	cidprimary "github.com/ipld/go-storethehash/store/primary/cid"
+	"github.com/ipld/go-storethehash/store/testutil"
+	"github.com/ipld/go-storethehash/store/types"
 	"github.com/stretchr/testify/require"
 )
 
