@@ -245,6 +245,73 @@ func (s *Store) Put(key []byte, value []byte) error {
 		}
 	}
 
+	s.flushTick()
+
+	return nil
+}
+
+func (s *Store) Remove(key []byte) (bool, error) {
+	if err := s.Err(); err != nil {
+		return false, err
+	}
+
+	// Get the key in primary storage
+	indexKey, err := s.index.Primary.IndexKey(key)
+	if err != nil {
+		return false, err
+	}
+	// See if the key already exists and get offset
+	offset, found, err := s.index.Get(indexKey)
+	if err != nil {
+		return false, err
+	}
+
+	// If not found it means there's nothing to remove.
+	// Return false with no error
+	if !found {
+		return false, nil
+	}
+
+	// If found get the key and value stored in primary to see if it is the same
+	// (index only stores prefixes)
+	storedKey, _, err := s.index.Primary.Get(offset)
+	if err != nil {
+		return false, err
+	}
+
+	// We need to compare to the resulting indexKey for the storedKey.
+	// Two keys may point to same IndexKey (i.e. two CIDS same multihash),
+	// and they need to be treated as the same key.
+	storedKey, err = s.index.Primary.IndexKey(storedKey)
+	if err != nil {
+		return false, err
+	}
+
+	// Compare keys
+	cmpKey := bytes.Equal(indexKey, storedKey)
+	// If they are not equal, it means that the key doesn't exist and
+	// there's nothing to remove.
+	if !cmpKey {
+		return false, nil
+	}
+
+	removed, err := s.index.Remove(storedKey)
+	if err != nil {
+		return false, err
+	}
+	if removed {
+		// Mark slot in freelist
+		err = s.freelist.Put(offset)
+		if err != nil {
+			return false, err
+		}
+	}
+
+	s.flushTick()
+	return removed, nil
+}
+
+func (s *Store) flushTick() {
 	now := time.Now()
 	s.rateLk.Lock()
 	elapsed := now.Sub(s.lastFlush)
@@ -257,8 +324,6 @@ func (s *Store) Put(key []byte, value []byte) error {
 	if sleep {
 		time.Sleep(25 * time.Millisecond)
 	}
-
-	return nil
 }
 
 func (s *Store) commit() (types.Work, error) {
@@ -271,6 +336,10 @@ func (s *Store) commit() (types.Work, error) {
 	if err != nil {
 		return 0, err
 	}
+	flWork, err := s.freelist.Flush()
+	if err != nil {
+		return 0, err
+	}
 	// finalize disk writes
 	if err := s.index.Primary.Sync(); err != nil {
 		return 0, err
@@ -278,7 +347,10 @@ func (s *Store) commit() (types.Work, error) {
 	if err := s.index.Sync(); err != nil {
 		return 0, err
 	}
-	return primaryWork + indexWork, nil
+	if err := s.freelist.Sync(); err != nil {
+		return 0, err
+	}
+	return primaryWork + indexWork + flWork, nil
 }
 
 func (s *Store) outstandingWork() bool {
