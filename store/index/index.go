@@ -154,6 +154,9 @@ func OpenIndex(path string, primary primary.PrimaryStorage, indexSizeBits uint8)
 func scanIndex(path string, indexSizeBits uint8) (Buckets, SizeBuckets, error) {
 	// this is a single sequential read across the whole index
 	file, err := openFileForScan(path)
+	if err != nil {
+		return nil, nil, err
+	}
 	defer func() {
 		_ = file.Close()
 	}()
@@ -176,7 +179,7 @@ func scanIndex(path string, indexSizeBits uint8) (Buckets, SizeBuckets, error) {
 	iter := NewIndexIter(buffered, types.Position(bytesRead))
 	for {
 		data, pos, err, done := iter.Next()
-		if done == true {
+		if done {
 			break
 		}
 		if err == io.EOF {
@@ -343,6 +346,51 @@ func (i *Index) Update(key []byte, location types.Block) error {
 	i.outstandingWork += types.Work(len(newData) + BucketPrefixSize + SizePrefixSize)
 	i.nextPool[bucket] = newData
 	return nil
+}
+
+// Remove a key from index
+func (i *Index) Remove(key []byte) (bool, error) {
+	// Get record list and bucket index
+	bucket, err := i.getBucketIndex(key)
+	if err != nil {
+		return false, err
+	}
+	i.bucketLk.Lock()
+	defer i.bucketLk.Unlock()
+	records, err := i.getRecordsFromBucket(bucket)
+	if err != nil {
+		return false, err
+	}
+
+	// The key doesn't need the prefix that was used to find the right bucket. For simplicty
+	// only full bytes are trimmed off.
+	indexKey := StripBucketPrefix(key, i.sizeBits)
+
+	var newData []byte
+	// If no records stored in that bucket yet it means there is no key
+	// to be removed.
+	if records == nil {
+		// No records in index. Nothing to remove.
+		return false, nil
+	}
+
+	// Read the record list to find the key and position
+	r := records.GetRecord(indexKey)
+	if r == nil {
+		// The record doesn't exist. Nothing to remove
+		return false, nil
+	}
+
+	// Remove key from record
+	newData = records.PutKeys([]KeyPositionPair{}, r.Pos, r.NextPos())
+	// NOTE: We are removing the key without changing any keys. If we want
+	// to optimize for storage we need to check the keys with the same prefix
+	// and see if any of them can be shortened. This process will be similar
+	// to finding where to put a new key.
+
+	i.outstandingWork += types.Work(len(newData) + BucketPrefixSize + SizePrefixSize)
+	i.nextPool[bucket] = newData
+	return true, nil
 }
 
 func (i *Index) getBucketIndex(key []byte) (BucketIndex, error) {

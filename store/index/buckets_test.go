@@ -43,6 +43,7 @@ func TestPutError(t *testing.T) {
 func TestGet(t *testing.T) {
 	var bucketBits uint8 = 3
 	buckets, err := index.NewBuckets(bucketBits)
+	require.NoError(t, err)
 	value, err := buckets.Get(3)
 	require.NoError(t, err)
 	require.Equal(t, types.Position(0), value)

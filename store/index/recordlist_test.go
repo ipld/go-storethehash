@@ -85,7 +85,7 @@ func TestRecordListFindKeyPosition(t *testing.T) {
 	require.False(t, hasPrev)
 
 	// Between two keys with same prefix, but first one being shorter
-	pos, prevRecord, hasPrev = records.FindKeyPosition([]byte("ab"))
+	pos, prevRecord, _ = records.FindKeyPosition([]byte("ab"))
 	require.Equal(t, pos, 14)
 	require.Equal(t, prevRecord.Key, []byte("a"))
 
@@ -96,13 +96,13 @@ func TestRecordListFindKeyPosition(t *testing.T) {
 
 	// Between two keys with both having a different prefix and the input key having a
 	// different length
-	pos, prevRecord, hasPrev = records.FindKeyPosition([]byte("cabefg"))
+	pos, prevRecord, _ = records.FindKeyPosition([]byte("cabefg"))
 	require.Equal(t, pos, 43)
 	require.Equal(t, prevRecord.Key, []byte("b"))
 
 	// Between two keys with both having a different prefix (with one character in common),
 	// all keys having the same length
-	pos, prevRecord, hasPrev = records.FindKeyPosition([]byte("dg"))
+	pos, prevRecord, _ = records.FindKeyPosition([]byte("dg"))
 	require.Equal(t, pos, 72)
 	require.Equal(t, prevRecord.Key, []byte("de"))
 

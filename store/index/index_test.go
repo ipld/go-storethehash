@@ -138,8 +138,81 @@ func TestIndexPutSingleKey(t *testing.T) {
 	require.Equal(t,
 		len(record.Key),
 		1,
-		"Key is trimmed to one byteas it's the only key in the record list",
+		"Key is trimmed to one bytes it's the only key in the record list",
 	)
+}
+
+// This test is about making sure that we remove the record for a key successfully
+
+func TestIndexRemoveKey(t *testing.T) {
+	k1 := []byte{1, 2, 3, 4, 5, 6, 7, 8, 9, 10}
+	k2 := []byte{1, 2, 3, 55, 5, 6, 7, 8, 9, 10}
+	b1 := types.Block{Offset: 0, Size: 1}
+	b2 := types.Block{Offset: 1, Size: 2}
+
+	const bucketBits uint8 = 24
+	primaryStorage := inmemory.NewInmemory([][2][]byte{})
+	tempDir, err := ioutil.TempDir("", "sth")
+	require.NoError(t, err)
+	indexPath := filepath.Join(tempDir, "storethehash.index")
+	i, err := index.OpenIndex(indexPath, primaryStorage, bucketBits)
+	require.NoError(t, err)
+	// Put key 1
+	err = i.Put(k1, b1)
+	require.NoError(t, err)
+	// Put key 2
+	err = i.Put(k2, b2)
+	require.NoError(t, err)
+
+	// Remove key
+	removed, err := i.Remove(k1)
+	require.NoError(t, err)
+	require.True(t, removed)
+
+	_, found, err := i.Get(k1)
+	require.NoError(t, err)
+	require.False(t, found)
+
+	secondKeyBlock, found, err := i.Get(k2)
+	require.NoError(t, err)
+	require.True(t, found)
+	require.Equal(t, secondKeyBlock, b2)
+
+	// Removing the same key again
+	removed, err = i.Remove(k1)
+	require.NoError(t, err)
+	require.False(t, removed)
+
+	// Trying to remove a non-existing key
+	removed, err = i.Remove([]byte{1, 2, 3, 78, 5, 6, 7, 8, 9, 10})
+	require.NoError(t, err)
+	require.False(t, removed)
+
+	// Flush and check if it holds
+	_, err = i.Flush()
+	require.NoError(t, err)
+	err = i.Sync()
+	require.NoError(t, err)
+
+	_, found, err = i.Get(k1)
+	require.NoError(t, err)
+	require.False(t, found)
+
+	secondKeyBlock, found, err = i.Get(k2)
+	require.NoError(t, err)
+	require.True(t, found)
+	require.Equal(t, secondKeyBlock, b2)
+
+	// Removing all keys from storage
+	removed, err = i.Remove(k2)
+	require.NoError(t, err)
+	require.True(t, removed)
+
+	// Removing over empty record
+	removed, err = i.Remove(k2)
+	require.NoError(t, err)
+	require.False(t, removed)
+
 }
 
 // This test is about making sure that a new key that doesn't share any prefix with other keys
