@@ -16,7 +16,7 @@ func NewBuckets(indexSizeBits uint8) (Buckets, error) {
 	if indexSizeBits > 32 {
 		return nil, types.ErrIndexTooLarge
 	}
-	return make(Buckets, 1<<indexSizeBits, 1<<indexSizeBits), nil
+	return make(Buckets, 1<<indexSizeBits), nil
 }
 
 // Put updates a bucket value
@@ -47,7 +47,7 @@ func NewSizeBuckets(indexSizeBits uint8) (SizeBuckets, error) {
 	if indexSizeBits > 32 {
 		return nil, types.ErrIndexTooLarge
 	}
-	return make(SizeBuckets, 1<<indexSizeBits, 1<<indexSizeBits), nil
+	return make(SizeBuckets, 1<<indexSizeBits), nil
 }
 
 // Put updates a bucket value

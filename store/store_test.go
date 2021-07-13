@@ -1,9 +1,7 @@
 package store_test
 
 import (
-	"fmt"
 	"io"
-	"io/ioutil"
 	"os"
 	"path/filepath"
 	"testing"
@@ -32,8 +30,7 @@ func initStore(t *testing.T, dir string) (*store.Store, error) {
 }
 
 func TestUpdate(t *testing.T) {
-	tempDir, err := ioutil.TempDir("", "sth")
-	require.NoError(t, err)
+	tempDir := t.TempDir()
 	s, err := initStore(t, tempDir)
 	require.NoError(t, err)
 	blks := testutil.GenerateBlocksOfSize(2, 100)
@@ -79,8 +76,7 @@ func TestUpdate(t *testing.T) {
 }
 
 func TestRemove(t *testing.T) {
-	tempDir, err := ioutil.TempDir("", "sth")
-	require.NoError(t, err)
+	tempDir := t.TempDir()
 	s, err := initStore(t, tempDir)
 	require.NoError(t, err)
 	blks := testutil.GenerateBlocksOfSize(2, 100)
@@ -114,7 +110,6 @@ func TestRemove(t *testing.T) {
 
 	// Start iterator
 	flPath := filepath.Join(tempDir, "storethehash.index.free")
-	fmt.Println(flPath)
 	file, err := os.Open(flPath)
 	require.NoError(t, err)
 	iter := freelist.NewFreeListIter(file)

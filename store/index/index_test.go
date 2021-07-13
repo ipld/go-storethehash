@@ -163,6 +163,7 @@ func TestIndexRemoveKey(t *testing.T) {
 	// Put key 2
 	err = i.Put(k2, b2)
 	require.NoError(t, err)
+
 	// Remove key
 	removed, err := i.Remove(k1)
 	require.NoError(t, err)
@@ -176,6 +177,11 @@ func TestIndexRemoveKey(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, found)
 	require.Equal(t, secondKeyBlock, b2)
+
+	// Removing the same key again
+	removed, err = i.Remove(k1)
+	require.NoError(t, err)
+	require.False(t, removed)
 
 	// Trying to remove a non-existing key
 	removed, err = i.Remove([]byte{1, 2, 3, 78, 5, 6, 7, 8, 9, 10})
@@ -196,6 +202,16 @@ func TestIndexRemoveKey(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, found)
 	require.Equal(t, secondKeyBlock, b2)
+
+	// Removing all keys from storage
+	removed, err = i.Remove(k2)
+	require.NoError(t, err)
+	require.True(t, removed)
+
+	// Removing over empty record
+	removed, err = i.Remove(k2)
+	require.NoError(t, err)
+	require.False(t, removed)
 
 }
 

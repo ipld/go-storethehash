@@ -287,11 +287,9 @@ func (s *Store) Remove(key []byte) (bool, error) {
 		return false, err
 	}
 
-	// Compare keys
-	cmpKey := bytes.Equal(indexKey, storedKey)
-	// If they are not equal, it means that the key doesn't exist and
+	// If keys are not equal, it means that the key doesn't exist and
 	// there's nothing to remove.
-	if !cmpKey {
+	if !bytes.Equal(indexKey, storedKey) {
 		return false, nil
 	}
 
