@@ -154,7 +154,7 @@ func (s *Store) Get(key []byte) ([]byte, bool, error) {
 
 	// The index stores only prefixes, hence check if the given key fully matches the
 	// key that is stored in the primary storage before returning the actual value.
-	if bytes.Compare(indexKey, primaryKey) != 0 {
+	if !bytes.Equal(indexKey, primaryKey) {
 		return nil, false, nil
 	}
 	return value, true, nil
@@ -389,8 +389,8 @@ func (s *Store) Has(key []byte) (bool, error) {
 		return false, err
 	}
 	blk, found, err := s.index.Get(indexKey)
-	if !found {
-		return false, nil
+	if !found || err != nil {
+		return false, err
 	}
 
 	// The index stores only prefixes, hence check if the given key fully matches the
@@ -401,7 +401,7 @@ func (s *Store) Has(key []byte) (bool, error) {
 		return false, err
 	}
 
-	return bytes.Compare(indexKey, primaryIndexKey) == 0, nil
+	return bytes.Equal(indexKey, primaryIndexKey), nil
 }
 
 func (s *Store) GetSize(key []byte) (types.Size, bool, error) {
@@ -425,7 +425,7 @@ func (s *Store) GetSize(key []byte) (types.Size, bool, error) {
 		return 0, false, err
 	}
 
-	if bytes.Compare(indexKey, primaryIndexKey) != 0 {
+	if !bytes.Equal(indexKey, primaryIndexKey) {
 		return 0, false, nil
 	}
 	return blk.Size - types.Size(len(key)), true, nil

@@ -37,10 +37,13 @@ func TestPut(t *testing.T) {
 	storage := inmemory.NewInmemory([][2][]byte{})
 
 	put_aa, err := storage.Put(aa[0], aa[1])
+	require.NoError(t, err)
 	require.Equal(t, put_aa, types.Block{Offset: 0, Size: 1})
 	put_yy, err := storage.Put(yy[0], yy[1])
+	require.NoError(t, err)
 	require.Equal(t, put_yy, types.Block{Offset: 1, Size: 1})
 	put_efg, err := storage.Put(efg[0], efg[1])
+	require.NoError(t, err)
 	require.Equal(t, put_efg, types.Block{Offset: 2, Size: 1})
 
 	key, value, err := storage.Get(types.Block{Offset: 0})
