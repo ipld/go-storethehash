@@ -26,7 +26,13 @@ func initStore(t *testing.T, dir string) (*store.Store, error) {
 	if err != nil {
 		return nil, err
 	}
-	return store.OpenStore(indexPath, primary, defaultIndexSizeBits, defaultSyncInterval, defaultBurstRate)
+	store, err := store.OpenStore(indexPath, primary, defaultIndexSizeBits, defaultSyncInterval, defaultBurstRate)
+	if err != nil {
+		_ = primary.Close()
+		return nil, err
+	}
+	t.Cleanup(func() { require.NoError(t, store.Close()) })
+	return store, nil
 }
 
 func TestUpdate(t *testing.T) {
@@ -65,6 +71,8 @@ func TestUpdate(t *testing.T) {
 	flPath := filepath.Join(tempDir, "storethehash.index.free")
 	file, err := os.Open(flPath)
 	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, file.Close()) })
+
 	iter := freelist.NewFreeListIter(file)
 	// Check freelist for the only update. Should be the first position
 	blk, err := iter.Next()
@@ -112,6 +120,8 @@ func TestRemove(t *testing.T) {
 	flPath := filepath.Join(tempDir, "storethehash.index.free")
 	file, err := os.Open(flPath)
 	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, file.Close()) })
+
 	iter := freelist.NewFreeListIter(file)
 	// Check freelist for the only removal. Should be the first position
 	blk, err := iter.Next()
