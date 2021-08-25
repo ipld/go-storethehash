@@ -121,6 +121,10 @@ func (s *Store) Close() error {
 		return err
 	}
 
+	if err := s.freelist.Close(); err != nil {
+		return err
+	}
+
 	return nil
 }
 
