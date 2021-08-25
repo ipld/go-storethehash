@@ -178,7 +178,7 @@ func scanIndex(path string, indexSizeBits uint8) (Buckets, SizeBuckets, error) {
 	buffered := bufio.NewReader(file)
 	iter := NewIndexIter(buffered, types.Position(bytesRead))
 	for {
-		data, pos, err, done := iter.Next()
+		data, pos, done, err := iter.Next()
 		if done {
 			break
 		}
@@ -611,7 +611,7 @@ func NewIndexIter(index io.Reader, pos types.Position) *IndexIter {
 	return &IndexIter{index, pos}
 }
 
-func (iter *IndexIter) Next() ([]byte, types.Position, error, bool) {
+func (iter *IndexIter) Next() ([]byte, types.Position, bool, error) {
 	size, err := ReadSizePrefix(iter.index)
 	switch err {
 	case nil:
@@ -620,13 +620,13 @@ func (iter *IndexIter) Next() ([]byte, types.Position, error, bool) {
 		data := make([]byte, size)
 		_, err := io.ReadFull(iter.index, data)
 		if err != nil {
-			return nil, 0, err, false
+			return nil, 0, false, err
 		}
-		return data, pos, nil, false
+		return data, pos, false, nil
 	case io.EOF:
-		return nil, 0, nil, true
+		return nil, 0, true, nil
 	default:
-		return nil, 0, err, false
+		return nil, 0, false, err
 	}
 }
 
