@@ -2,7 +2,6 @@ package cidprimary_test
 
 import (
 	"io"
-	"io/ioutil"
 	"os"
 	"path/filepath"
 	"testing"
@@ -19,8 +18,7 @@ import (
 // to a single byte.
 
 func TestIndexPut(t *testing.T) {
-	tempDir, err := ioutil.TempDir("", "sth")
-	require.NoError(t, err)
+	tempDir := t.TempDir()
 	primaryPath := filepath.Join(tempDir, "storethehash.primary")
 	primaryStorage, err := cidprimary.OpenCIDPrimary(primaryPath)
 	require.NoError(t, err)
@@ -63,8 +61,7 @@ func TestIndexPut(t *testing.T) {
 }
 
 func TestIndexGetEmptyIndex(t *testing.T) {
-	tempDir, err := ioutil.TempDir("", "sth")
-	require.NoError(t, err)
+	tempDir := t.TempDir()
 	primaryPath := filepath.Join(tempDir, "storethehash.primary")
 	primaryStorage, err := cidprimary.OpenCIDPrimary(primaryPath)
 	require.NoError(t, err)
@@ -79,8 +76,7 @@ func TestIndexGetEmptyIndex(t *testing.T) {
 }
 
 func TestIndexGet(t *testing.T) {
-	tempDir, err := ioutil.TempDir("", "sth")
-	require.NoError(t, err)
+	tempDir := t.TempDir()
 	primaryPath := filepath.Join(tempDir, "storethehash.primary")
 	primaryStorage, err := cidprimary.OpenCIDPrimary(primaryPath)
 	require.NoError(t, err)

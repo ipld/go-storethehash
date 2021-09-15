@@ -2,7 +2,6 @@ package freelist_test
 
 import (
 	"io"
-	"io/ioutil"
 	"math/rand"
 	"os"
 	"path/filepath"
@@ -14,8 +13,7 @@ import (
 )
 
 func TestFLPut(t *testing.T) {
-	tempDir, err := ioutil.TempDir("", "sth")
-	require.NoError(t, err)
+	tempDir := t.TempDir()
 	flPath := filepath.Join(tempDir, "storethehash.free")
 	fl, err := freelist.OpenFreeList(flPath)
 	require.NoError(t, err)
