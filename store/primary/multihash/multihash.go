@@ -10,7 +10,6 @@ import (
 
 	"github.com/ipld/go-storethehash/store/primary"
 	"github.com/ipld/go-storethehash/store/types"
-	"github.com/multiformats/go-multihash"
 	mh "github.com/multiformats/go-multihash"
 )
 
@@ -147,7 +146,7 @@ func (cp *MultihashPrimary) flushBlock(key []byte, value []byte) (types.Work, er
 
 func (cp *MultihashPrimary) IndexKey(key []byte) ([]byte, error) {
 	// This is a sanity-check to see if it really is a multihash
-	decoded, err := multihash.Decode(mh.Multihash(key))
+	decoded, err := mh.Decode(mh.Multihash(key))
 	if err != nil {
 		return nil, err
 	}
