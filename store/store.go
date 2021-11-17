@@ -28,6 +28,7 @@ type Store struct {
 	burstRate types.Work
 	lastFlush time.Time
 
+	closing      chan struct{}
 	flushNow     chan struct{}
 	syncInterval time.Duration
 }
@@ -49,6 +50,7 @@ func OpenStore(path string, primary primary.PrimaryStorage, indexSizeBits uint8,
 		running:      false,
 		syncInterval: syncInterval,
 		burstRate:    burstRate,
+		closing:      make(chan struct{}),
 		flushNow:     make(chan struct{}, 1),
 	}
 	return store, nil
@@ -69,16 +71,15 @@ func (s *Store) run() {
 
 	for {
 		select {
-		case _, open := <-s.flushNow:
+		case <-s.flushNow:
 			s.Flush()
-			if !open {
-				d.Stop()
-				select {
-				case <-d.C:
-				default:
-				}
-				return
+		case <-s.closing:
+			d.Stop()
+			select {
+			case <-d.C:
+			default:
 			}
+			return
 		case <-d.C:
 			select {
 			case s.flushNow <- struct{}{}:
@@ -104,7 +105,7 @@ func (s *Store) Close() error {
 	s.stateLk.Unlock()
 
 	if running {
-		close(s.flushNow)
+		close(s.closing)
 	}
 
 	var err error
@@ -321,11 +322,12 @@ func (s *Store) Remove(key []byte) (bool, error) {
 }
 
 func (s *Store) flushTick() {
-	if s.rate == 0 {
-		return
-	}
 	now := time.Now()
 	s.rateLk.Lock()
+	if s.rate == 0 {
+		s.rateLk.Unlock()
+		return
+	}
 	elapsed := now.Sub(s.lastFlush)
 	// TODO: move this Outstanding calculation into Pool?
 	work := s.index.OutstandingWork() + s.index.Primary.OutstandingWork() + s.freelist.OutstandingWork()
