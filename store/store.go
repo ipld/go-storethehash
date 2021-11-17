@@ -28,7 +28,7 @@ type Store struct {
 	burstRate types.Work
 	lastFlush time.Time
 
-	closing      chan struct{}
+	flushNow     chan struct{}
 	syncInterval time.Duration
 }
 
@@ -49,7 +49,7 @@ func OpenStore(path string, primary primary.PrimaryStorage, indexSizeBits uint8,
 		running:      false,
 		syncInterval: syncInterval,
 		burstRate:    burstRate,
-		closing:      make(chan struct{}),
+		flushNow:     make(chan struct{}, 1),
 	}
 	return store, nil
 }
@@ -69,17 +69,22 @@ func (s *Store) run() {
 
 	for {
 		select {
-
-		case <-s.closing:
-			d.Stop()
-			select {
-			case <-d.C:
-			default:
-			}
-			return
-
-		case <-d.C:
+		case _, open := <-s.flushNow:
 			s.Flush()
+			if !open {
+				d.Stop()
+				select {
+				case <-d.C:
+				default:
+				}
+				return
+			}
+		case <-d.C:
+			select {
+			case s.flushNow <- struct{}{}:
+			default:
+				// Already signaled by write, do not need another flush.
+			}
 		}
 	}
 }
@@ -88,40 +93,40 @@ func (s *Store) Close() error {
 	s.stateLk.Lock()
 	open := s.open
 	s.open = false
-	s.stateLk.Unlock()
 
 	if !open {
+		s.stateLk.Unlock()
 		return nil
 	}
 
-	s.stateLk.Lock()
 	running := s.running
 	s.running = false
 	s.stateLk.Unlock()
 
 	if running {
-		close(s.closing)
+		close(s.flushNow)
 	}
 
+	var err error
 	if s.outstandingWork() {
-		if _, err := s.commit(); err != nil {
+		if _, err = s.commit(); err != nil {
 			s.setErr(err)
 		}
 	}
 
-	if err := s.Err(); err != nil {
+	if err = s.Err(); err != nil {
 		return err
 	}
 
-	if err := s.index.Close(); err != nil {
+	if err = s.index.Close(); err != nil {
 		return err
 	}
 
-	if err := s.index.Primary.Close(); err != nil {
+	if err = s.index.Primary.Close(); err != nil {
 		return err
 	}
 
-	if err := s.freelist.Close(); err != nil {
+	if err = s.freelist.Close(); err != nil {
 		return err
 	}
 
@@ -129,7 +134,8 @@ func (s *Store) Close() error {
 }
 
 func (s *Store) Get(key []byte) ([]byte, bool, error) {
-	if err := s.Err(); err != nil {
+	err := s.Err()
+	if err != nil {
 		return nil, false, err
 	}
 
@@ -177,7 +183,8 @@ func (s *Store) setErr(err error) {
 }
 
 func (s *Store) Put(key []byte, value []byte) error {
-	if err := s.Err(); err != nil {
+	err := s.Err()
+	if err != nil {
 		return err
 	}
 
@@ -232,19 +239,18 @@ func (s *Store) Put(key []byte, value []byte) error {
 	// If the key being set is not found, or the stored key is not equal
 	// (even if same prefix is shared @index), we put the key without updates
 	if !found || !cmpKey {
-		if err := s.index.Put(indexKey, fileOffset); err != nil {
+		if err = s.index.Put(indexKey, fileOffset); err != nil {
 			return err
 		}
 	} else {
 		// If the key exists and the one stored is the one we are trying
 		// to put this is an update.
 		// if found && bytes.Compare(key, storedKey) == 0 {
-		if err := s.index.Update(indexKey, fileOffset); err != nil {
+		if err = s.index.Update(indexKey, fileOffset); err != nil {
 			return err
 		}
 		// Add outdated data in primary storage to freelist
-		err = s.freelist.Put(prevOffset)
-		if err != nil {
+		if err = s.freelist.Put(prevOffset); err != nil {
 			return err
 		}
 	}
@@ -255,7 +261,8 @@ func (s *Store) Put(key []byte, value []byte) error {
 }
 
 func (s *Store) Remove(key []byte) (bool, error) {
-	if err := s.Err(); err != nil {
+	err := s.Err()
+	if err != nil {
 		return false, err
 	}
 
@@ -314,22 +321,30 @@ func (s *Store) Remove(key []byte) (bool, error) {
 }
 
 func (s *Store) flushTick() {
+	if s.rate == 0 {
+		return
+	}
 	now := time.Now()
 	s.rateLk.Lock()
 	elapsed := now.Sub(s.lastFlush)
 	// TODO: move this Outstanding calculation into Pool?
 	work := s.index.OutstandingWork() + s.index.Primary.OutstandingWork() + s.freelist.OutstandingWork()
 	rate := math.Ceil(float64(work) / elapsed.Seconds())
-	sleep := s.rate > 0 && rate > s.rate && work > s.burstRate
+	flushNow := rate > s.rate && work > s.burstRate
 	s.rateLk.Unlock()
 
-	if sleep {
-		time.Sleep(25 * time.Millisecond)
+	if flushNow {
+		select {
+		case s.flushNow <- struct{}{}:
+		default:
+			// Already signaled, but flush not yet started.  No need to wait to
+			// signal again since the existing unread signal guarantees the
+			// change will be written.
+		}
 	}
 }
 
 func (s *Store) commit() (types.Work, error) {
-
 	primaryWork, err := s.index.Primary.Flush()
 	if err != nil {
 		return 0, err
@@ -343,13 +358,13 @@ func (s *Store) commit() (types.Work, error) {
 		return 0, err
 	}
 	// finalize disk writes
-	if err := s.index.Primary.Sync(); err != nil {
+	if err = s.index.Primary.Sync(); err != nil {
 		return 0, err
 	}
-	if err := s.index.Sync(); err != nil {
+	if err = s.index.Sync(); err != nil {
 		return 0, err
 	}
-	if err := s.freelist.Sync(); err != nil {
+	if err = s.freelist.Sync(); err != nil {
 		return 0, err
 	}
 	return primaryWork + indexWork + flWork, nil
@@ -358,10 +373,12 @@ func (s *Store) commit() (types.Work, error) {
 func (s *Store) outstandingWork() bool {
 	return s.index.OutstandingWork()+s.index.Primary.OutstandingWork() > 0
 }
+
 func (s *Store) Flush() {
+	lastFlush := time.Now()
 
 	s.rateLk.Lock()
-	s.lastFlush = time.Now()
+	s.lastFlush = lastFlush
 	s.rateLk.Unlock()
 
 	if !s.outstandingWork() {
@@ -375,17 +392,19 @@ func (s *Store) Flush() {
 	}
 
 	now := time.Now()
-	s.rateLk.Lock()
-	elapsed := now.Sub(s.lastFlush)
+	elapsed := now.Sub(lastFlush)
 	rate := math.Ceil(float64(work) / elapsed.Seconds())
+
 	if work > types.Work(s.burstRate) {
+		s.rateLk.Lock()
 		s.rate = rate
+		s.rateLk.Unlock()
 	}
-	s.rateLk.Unlock()
 }
 
 func (s *Store) Has(key []byte) (bool, error) {
-	if err := s.Err(); err != nil {
+	err := s.Err()
+	if err != nil {
 		return false, err
 	}
 	indexKey, err := s.index.Primary.IndexKey(key)

@@ -116,15 +116,18 @@ func readMh(buf []byte) (mh.Multihash, int, error) {
 	return h, len(buf) - br.Len(), nil
 }
 func (cp *MultihashPrimary) Put(key []byte, value []byte) (types.Block, error) {
+	size := len(key) + len(value)
+	cpLen := SizePrefix + types.Position(size)
+	outWork := types.Work(SizePrefix + size)
+
 	cp.poolLk.Lock()
 	defer cp.poolLk.Unlock()
 	length := cp.length
-	size := len(key) + len(value)
-	cp.length += SizePrefix + types.Position(size)
+	cp.length += cpLen
 	blk := types.Block{Offset: length, Size: types.Size(size)}
 	cp.nextPool.refs[blk] = len(cp.nextPool.blocks)
 	cp.nextPool.blocks = append(cp.nextPool.blocks, blockRecord{key, value})
-	cp.outstandingWork += types.Work(SizePrefix + size)
+	cp.outstandingWork += outWork
 	return blk, nil
 }
 
