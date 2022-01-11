@@ -59,7 +59,7 @@ func TestParallelism(t *testing.T) {
 
 	t.Logf("Running some concurrent inserts and fetches")
 
-	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 
 	var wg sync.WaitGroup
