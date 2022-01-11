@@ -44,6 +44,7 @@ func TestIndexPut(t *testing.T) {
 
 	// Skip header
 	file, err := os.Open(primaryPath)
+	t.Cleanup(func() { file.Close() })
 	require.NoError(t, err)
 	iter := cidprimary.NewCIDPrimaryIter(file)
 	for _, expectedBlk := range blks {
@@ -58,6 +59,9 @@ func TestIndexPut(t *testing.T) {
 	}
 	_, _, err = iter.Next()
 	require.EqualError(t, err, io.EOF.Error())
+
+	err = primaryStorage.Close()
+	require.NoError(t, err)
 }
 
 func TestIndexGetEmptyIndex(t *testing.T) {
@@ -65,6 +69,7 @@ func TestIndexGetEmptyIndex(t *testing.T) {
 	primaryPath := filepath.Join(tempDir, "storethehash.primary")
 	primaryStorage, err := cidprimary.OpenCIDPrimary(primaryPath)
 	require.NoError(t, err)
+	defer primaryStorage.Close()
 
 	key, value, err := primaryStorage.Get(types.Block{
 		Offset: 0,
@@ -120,4 +125,7 @@ func TestIndexGet(t *testing.T) {
 		require.True(t, expectedBlk.Cid().Equals(blk.Cid()))
 		require.Equal(t, expectedBlk.RawData(), blk.RawData())
 	}
+
+	err = primaryStorage.Close()
+	require.NoError(t, err)
 }

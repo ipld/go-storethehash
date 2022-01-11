@@ -32,9 +32,12 @@ func TestFLPut(t *testing.T) {
 	require.Equal(t, types.Work(expectedStorage), work)
 	err = fl.Sync()
 	require.NoError(t, err)
+	err = fl.Close()
+	require.NoError(t, err)
 
 	// Skip header
 	file, err := os.Open(flPath)
+	t.Cleanup(func() { file.Close() })
 	require.NoError(t, err)
 	iter := freelist.NewFreeListIter(file)
 	for _, expectedBlk := range blks {
@@ -45,6 +48,8 @@ func TestFLPut(t *testing.T) {
 	}
 	_, err = iter.Next()
 	require.EqualError(t, err, io.EOF.Error())
+	err = file.Close()
+	require.NoError(t, err)
 }
 
 func generateFreeListEntries(n int) []types.Block {
