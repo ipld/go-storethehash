@@ -1,6 +1,7 @@
 package store_test
 
 import (
+	"context"
 	"io"
 	"os"
 	"path/filepath"
@@ -40,27 +41,28 @@ func TestUpdate(t *testing.T) {
 	s, err := initStore(t, tempDir)
 	require.NoError(t, err)
 	blks := testutil.GenerateBlocksOfSize(2, 100)
+	ctx := context.Background()
 
 	t.Logf("Putting a new block")
-	err = s.Put(blks[0].Cid().Bytes(), blks[0].RawData())
+	err = s.Put(ctx, blks[0].Cid().Bytes(), blks[0].RawData())
 	require.NoError(t, err)
-	value, found, err := s.Get(blks[0].Cid().Bytes())
+	value, found, err := s.Get(ctx, blks[0].Cid().Bytes())
 	require.NoError(t, err)
 	require.True(t, found)
 	require.Equal(t, value, blks[0].RawData())
 
 	t.Logf("Overwrite same key with different value")
-	err = s.Put(blks[0].Cid().Bytes(), blks[1].RawData())
+	err = s.Put(ctx, blks[0].Cid().Bytes(), blks[1].RawData())
 	require.NoError(t, err)
-	value, found, err = s.Get(blks[0].Cid().Bytes())
+	value, found, err = s.Get(ctx, blks[0].Cid().Bytes())
 	require.NoError(t, err)
 	require.True(t, found)
 	require.Equal(t, value, blks[1].RawData())
 
 	t.Logf("Overwrite same key with same value")
-	err = s.Put(blks[0].Cid().Bytes(), blks[1].RawData())
+	err = s.Put(ctx, blks[0].Cid().Bytes(), blks[1].RawData())
 	require.Error(t, err, types.ErrKeyExists.Error())
-	value, found, err = s.Get(blks[0].Cid().Bytes())
+	value, found, err = s.Get(ctx, blks[0].Cid().Bytes())
 	require.NoError(t, err)
 	require.True(t, found)
 	require.Equal(t, value, blks[1].RawData())
@@ -88,11 +90,12 @@ func TestRemove(t *testing.T) {
 	s, err := initStore(t, tempDir)
 	require.NoError(t, err)
 	blks := testutil.GenerateBlocksOfSize(2, 100)
+	ctx := context.Background()
 
 	t.Logf("Putting blocks")
-	err = s.Put(blks[0].Cid().Bytes(), blks[0].RawData())
+	err = s.Put(ctx, blks[0].Cid().Bytes(), blks[0].RawData())
 	require.NoError(t, err)
-	err = s.Put(blks[1].Cid().Bytes(), blks[1].RawData())
+	err = s.Put(ctx, blks[1].Cid().Bytes(), blks[1].RawData())
 	require.NoError(t, err)
 
 	t.Logf("Removing the first block")
@@ -101,11 +104,11 @@ func TestRemove(t *testing.T) {
 	require.True(t, removed)
 
 	t.Logf("Checking if the block has been removed successfully")
-	value, found, err := s.Get(blks[1].Cid().Bytes())
+	value, found, err := s.Get(ctx, blks[1].Cid().Bytes())
 	require.NoError(t, err)
 	require.True(t, found)
 	require.Equal(t, value, blks[1].RawData())
-	_, found, err = s.Get(blks[0].Cid().Bytes())
+	_, found, err = s.Get(ctx, blks[0].Cid().Bytes())
 	require.NoError(t, err)
 	require.False(t, found)
 

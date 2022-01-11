@@ -37,7 +37,7 @@ func TestParallelism(t *testing.T) {
 	t.Logf("Inserting %d samples\n", len(blks))
 	duplicates := 0
 	for _, blk := range blks {
-		if err := bs.Put(blk); err != nil {
+		if err := bs.Put(ctx, blk); err != nil {
 			if errors.Is(err, types.ErrKeyExists) {
 				duplicates++
 				continue
@@ -50,7 +50,7 @@ func TestParallelism(t *testing.T) {
 	t.Logf("Finding random blks")
 	for i := 0; i < len(blks)/25; i++ {
 		expectedBlk := blks[rand.Intn(len(blks))]
-		blk, err := bs.Get(expectedBlk.Cid())
+		blk, err := bs.Get(ctx, expectedBlk.Cid())
 		require.NoError(t, err)
 		require.True(t, expectedBlk.Cid().Equals(blk.Cid()))
 		require.Equal(t, expectedBlk.RawData(), blk.RawData())
@@ -81,7 +81,7 @@ func TestParallelism(t *testing.T) {
 				}
 				for i := 0; i < 500; i++ {
 					blk := newBlks[rand.Intn(len(newBlks))]
-					if err := bs.Put(blk); err != nil && !errors.Is(err, types.ErrKeyExists) {
+					if err := bs.Put(ctx, blk); err != nil && !errors.Is(err, types.ErrKeyExists) {
 						t.Logf("Failed to insert cid %v: %v\n", blk.Cid().String(), err)
 						outputErrors <- err
 						return
@@ -106,7 +106,7 @@ func TestParallelism(t *testing.T) {
 				}
 				for i := 0; i < 500; i++ {
 					expectedBlk := newBlks[rand.Intn(len(newBlks))]
-					_, err := bs.Get(expectedBlk.Cid())
+					_, err := bs.Get(ctx, expectedBlk.Cid())
 					if err != nil && !errors.Is(err, bstore.ErrNotFound) {
 						t.Logf("Failed to read: %v\n", err)
 						outputErrors <- err

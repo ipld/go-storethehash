@@ -2,6 +2,7 @@ package store
 
 import (
 	"bytes"
+	"context"
 	"math"
 	"sync"
 	"time"
@@ -134,10 +135,13 @@ func (s *Store) Close() error {
 	return nil
 }
 
-func (s *Store) Get(key []byte) ([]byte, bool, error) {
+func (s *Store) Get(ctx context.Context, key []byte) ([]byte, bool, error) {
 	err := s.Err()
 	if err != nil {
 		return nil, false, err
+	}
+	if ctx.Err() != nil {
+		return nil, false, ctx.Err()
 	}
 
 	indexKey, err := s.index.Primary.IndexKey(key)
@@ -183,10 +187,13 @@ func (s *Store) setErr(err error) {
 	s.stateLk.Unlock()
 }
 
-func (s *Store) Put(key []byte, value []byte) error {
+func (s *Store) Put(ctx context.Context, key []byte, value []byte) error {
 	err := s.Err()
 	if err != nil {
 		return err
+	}
+	if ctx.Err() != nil {
+		return ctx.Err()
 	}
 
 	// Get the key in primary storage
@@ -404,10 +411,13 @@ func (s *Store) Flush() {
 	}
 }
 
-func (s *Store) Has(key []byte) (bool, error) {
+func (s *Store) Has(ctx context.Context, key []byte) (bool, error) {
 	err := s.Err()
 	if err != nil {
 		return false, err
+	}
+	if ctx.Err() != nil {
+		return false, ctx.Err()
 	}
 	indexKey, err := s.index.Primary.IndexKey(key)
 	if err != nil {
@@ -429,7 +439,10 @@ func (s *Store) Has(key []byte) (bool, error) {
 	return bytes.Equal(indexKey, primaryIndexKey), nil
 }
 
-func (s *Store) GetSize(key []byte) (types.Size, bool, error) {
+func (s *Store) GetSize(ctx context.Context, key []byte) (types.Size, bool, error) {
+	if ctx.Err() != nil {
+		return 0, false, ctx.Err()
+	}
 	indexKey, err := s.index.Primary.IndexKey(key)
 	if err != nil {
 		return 0, false, err

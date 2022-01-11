@@ -78,18 +78,18 @@ func OpenHashedBlockstore(indexPath string, dataPath string, options ...Option) 
 }
 
 // DeleteBlock is not supported for this store
-func (bs *HashedBlockstore) DeleteBlock(_ cid.Cid) error {
+func (bs *HashedBlockstore) DeleteBlock(_ context.Context, _ cid.Cid) error {
 	return ErrNotSupported
 }
 
 // Has indicates if a block is present in a block store
-func (bs *HashedBlockstore) Has(c cid.Cid) (bool, error) {
-	return bs.store.Has(c.Bytes())
+func (bs *HashedBlockstore) Has(ctx context.Context, c cid.Cid) (bool, error) {
+	return bs.store.Has(ctx, c.Bytes())
 }
 
 // Get returns a block
-func (bs *HashedBlockstore) Get(c cid.Cid) (blocks.Block, error) {
-	value, found, err := bs.store.Get(c.Bytes())
+func (bs *HashedBlockstore) Get(ctx context.Context, c cid.Cid) (blocks.Block, error) {
+	value, found, err := bs.store.Get(ctx, c.Bytes())
 	if err != nil {
 		return nil, err
 	}
@@ -100,9 +100,9 @@ func (bs *HashedBlockstore) Get(c cid.Cid) (blocks.Block, error) {
 }
 
 // GetSize returns the CIDs mapped BlockSize
-func (bs *HashedBlockstore) GetSize(c cid.Cid) (int, error) {
+func (bs *HashedBlockstore) GetSize(ctx context.Context, c cid.Cid) (int, error) {
 	// unoptimized implementation for now
-	size, found, err := bs.store.GetSize(c.Bytes())
+	size, found, err := bs.store.GetSize(ctx, c.Bytes())
 	if err != nil {
 		return 0, err
 	}
@@ -113,8 +113,8 @@ func (bs *HashedBlockstore) GetSize(c cid.Cid) (int, error) {
 }
 
 // Put puts a given block to the underlying datastore
-func (bs *HashedBlockstore) Put(blk blocks.Block) error {
-	err := bs.store.Put(blk.Cid().Bytes(), blk.RawData())
+func (bs *HashedBlockstore) Put(ctx context.Context, blk blocks.Block) error {
+	err := bs.store.Put(ctx, blk.Cid().Bytes(), blk.RawData())
 	// suppress key exist error because this is not expected behavior for a blockstore
 	if err == types.ErrKeyExists {
 		return nil
@@ -124,9 +124,9 @@ func (bs *HashedBlockstore) Put(blk blocks.Block) error {
 
 // PutMany puts a slice of blocks at the same time using batching
 // capabilities of the underlying datastore whenever possible.
-func (bs *HashedBlockstore) PutMany(blks []blocks.Block) error {
+func (bs *HashedBlockstore) PutMany(ctx context.Context, blks []blocks.Block) error {
 	for _, blk := range blks {
-		err := bs.store.Put(blk.Cid().Bytes(), blk.RawData())
+		err := bs.store.Put(ctx, blk.Cid().Bytes(), blk.RawData())
 		// suppress key exist error because this is not expected behavior for a blockstore
 		if err != nil && err != types.ErrKeyExists {
 			return err
