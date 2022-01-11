@@ -44,8 +44,7 @@ func assertHeader(t *testing.T, indexPath string, bucketsBits uint8) {
 func assertCommonPrefixTrimmed(t *testing.T, key1 []byte, key2 []byte, expectedKeyLength int) {
 	const bucketBits uint8 = 24
 	primaryStorage := inmemory.NewInmemory([][2][]byte{{key1, {0x20}}, {key2, {0x30}}})
-	tempDir, err := ioutil.TempDir("", "sth")
-	require.NoError(t, err)
+	tempDir := t.TempDir()
 	indexPath := filepath.Join(tempDir, "storethehash.index")
 	i, err := index.OpenIndex(indexPath, primaryStorage, bucketBits)
 	require.NoError(t, err)
@@ -61,47 +60,46 @@ func assertCommonPrefixTrimmed(t *testing.T, key1 []byte, key2 []byte, expectedK
 	require.NoError(t, err)
 	err = i.Sync()
 	require.NoError(t, err)
+	err = i.Close()
+	require.NoError(t, err)
 
 	// Skip header
 	file, err := os.Open(indexPath)
+	t.Cleanup(func() { file.Close() })
 	require.NoError(t, err)
 	_, bytesRead, err := index.ReadHeader(file)
 	require.NoError(t, err)
 	iter := index.NewIndexIter(file, bytesRead)
 
 	// The record list is append only, hence the first record list only contains the first insert
-	{
-		data, _, done, err := iter.Next()
-		require.NoError(t, err)
-		require.False(t, done)
-		recordlist := index.NewRecordList(data)
-		recordIter := recordlist.Iter()
-		var keyLengths []int
-		for !recordIter.Done() {
-			record := recordIter.Next()
-			keyLengths = append(keyLengths, len(record.Key))
-		}
-		require.Equal(t, keyLengths, []int{1}, "Single key has the expected length of 1")
+	data, _, done, err := iter.Next()
+	require.NoError(t, err)
+	require.False(t, done)
+	recordlist := index.NewRecordList(data)
+	recordIter := recordlist.Iter()
+	var keyLengths []int
+	for !recordIter.Done() {
+		record := recordIter.Next()
+		keyLengths = append(keyLengths, len(record.Key))
 	}
+	require.Equal(t, keyLengths, []int{1}, "Single key has the expected length of 1")
 
 	// The second block contains both keys
-	{
-		data, _, done, err := iter.Next()
-		require.NoError(t, err)
-		require.False(t, done)
-		recordlist := index.NewRecordList(data)
-		recordIter := recordlist.Iter()
-		var keyLengths []int
-		for !recordIter.Done() {
-			record := recordIter.Next()
-			keyLengths = append(keyLengths, len(record.Key))
-		}
-		require.Equal(t,
-			keyLengths,
-			[]int{expectedKeyLength, expectedKeyLength},
-			"All keys are trimmed to their minimal distringuishable prefix",
-		)
+	data, _, done, err = iter.Next()
+	require.NoError(t, err)
+	require.False(t, done)
+	recordlist = index.NewRecordList(data)
+	recordIter = recordlist.Iter()
+	keyLengths = []int{}
+	for !recordIter.Done() {
+		record := recordIter.Next()
+		keyLengths = append(keyLengths, len(record.Key))
 	}
+	require.Equal(t,
+		keyLengths,
+		[]int{expectedKeyLength, expectedKeyLength},
+		"All keys are trimmed to their minimal distringuishable prefix",
+	)
 }
 
 // This test is about making sure that inserts into an empty bucket result in a key that is trimmed
@@ -110,8 +108,7 @@ func assertCommonPrefixTrimmed(t *testing.T, key1 []byte, key2 []byte, expectedK
 func TestIndexPutSingleKey(t *testing.T) {
 	const bucketBits uint8 = 24
 	primaryStorage := inmemory.NewInmemory([][2][]byte{})
-	tempDir, err := ioutil.TempDir("", "sth")
-	require.NoError(t, err)
+	tempDir := t.TempDir()
 	indexPath := filepath.Join(tempDir, "storethehash.index")
 	i, err := index.OpenIndex(indexPath, primaryStorage, bucketBits)
 	require.NoError(t, err)
@@ -121,9 +118,12 @@ func TestIndexPutSingleKey(t *testing.T) {
 	require.NoError(t, err)
 	err = i.Sync()
 	require.NoError(t, err)
+	err = i.Close()
+	require.NoError(t, err)
 
 	// Skip header
 	file, err := os.Open(indexPath)
+	t.Cleanup(func() { file.Close() })
 	require.NoError(t, err)
 	_, bytesRead, err := index.ReadHeader(file)
 	require.NoError(t, err)
@@ -152,8 +152,7 @@ func TestIndexRemoveKey(t *testing.T) {
 
 	const bucketBits uint8 = 24
 	primaryStorage := inmemory.NewInmemory([][2][]byte{})
-	tempDir, err := ioutil.TempDir("", "sth")
-	require.NoError(t, err)
+	tempDir := t.TempDir()
 	indexPath := filepath.Join(tempDir, "storethehash.index")
 	i, err := index.OpenIndex(indexPath, primaryStorage, bucketBits)
 	require.NoError(t, err)
@@ -213,6 +212,8 @@ func TestIndexRemoveKey(t *testing.T) {
 	require.NoError(t, err)
 	require.False(t, removed)
 
+	err = i.Close()
+	require.NoError(t, err)
 }
 
 // This test is about making sure that a new key that doesn't share any prefix with other keys
@@ -220,8 +221,7 @@ func TestIndexRemoveKey(t *testing.T) {
 func TestIndexPutDistinctKey(t *testing.T) {
 	const bucketBits uint8 = 24
 	primaryStorage := inmemory.NewInmemory([][2][]byte{})
-	tempDir, err := ioutil.TempDir("", "sth")
-	require.NoError(t, err)
+	tempDir := t.TempDir()
 	indexPath := filepath.Join(tempDir, "storethehash.index")
 	i, err := index.OpenIndex(indexPath, primaryStorage, bucketBits)
 	require.NoError(t, err)
@@ -233,9 +233,12 @@ func TestIndexPutDistinctKey(t *testing.T) {
 	require.NoError(t, err)
 	err = i.Sync()
 	require.NoError(t, err)
+	err = i.Close()
+	require.NoError(t, err)
 
 	// Skip header
 	file, err := os.Open(indexPath)
+	t.Cleanup(func() { file.Close() })
 	require.NoError(t, err)
 	_, bytesRead, err := index.ReadHeader(file)
 	require.NoError(t, err)
@@ -260,11 +263,11 @@ func TestIndexPutDistinctKey(t *testing.T) {
 	}
 	require.Equal(t, keys, [][]byte{{4}, {55}}, "All keys are trimmed to a single byte")
 }
+
 func TestCorrectCacheReading(t *testing.T) {
 	const bucketBits uint8 = 24
 	primaryStorage := inmemory.NewInmemory([][2][]byte{})
-	tempDir, err := ioutil.TempDir("", "sth")
-	require.NoError(t, err)
+	tempDir := t.TempDir()
 	indexPath := filepath.Join(tempDir, "storethehash.index")
 	i, err := index.OpenIndex(indexPath, primaryStorage, bucketBits)
 	require.NoError(t, err)
@@ -283,6 +286,9 @@ func TestCorrectCacheReading(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, found)
 	require.Equal(t, types.Block{Offset: 333, Size: 10}, block)
+
+	err = i.Close()
+	require.NoError(t, err)
 }
 
 // This test is about making sure that a key is trimmed correctly if it shares a prefix with the
@@ -315,8 +321,7 @@ func TestIndexPutPrevAndNextKeyCommonPrefix(t *testing.T) {
 		{key2, {0x20}},
 		{key3, {0x30}},
 	})
-	tempDir, err := ioutil.TempDir("", "sth")
-	require.NoError(t, err)
+	tempDir := t.TempDir()
 	indexPath := filepath.Join(tempDir, "storethehash.index")
 	i, err := index.OpenIndex(indexPath, primaryStorage, bucketBits)
 	require.NoError(t, err)
@@ -330,9 +335,12 @@ func TestIndexPutPrevAndNextKeyCommonPrefix(t *testing.T) {
 	require.NoError(t, err)
 	err = i.Sync()
 	require.NoError(t, err)
+	err = i.Close()
+	require.NoError(t, err)
 
 	// Skip header
 	file, err := os.Open(indexPath)
+	t.Cleanup(func() { file.Close() })
 	require.NoError(t, err)
 	_, bytesRead, err := index.ReadHeader(file)
 	require.NoError(t, err)
@@ -365,14 +373,15 @@ func TestIndexGetEmptyIndex(t *testing.T) {
 	key := []byte{1, 2, 3, 4, 5, 6, 9, 9, 9, 9}
 	const bucketBits uint8 = 24
 	primaryStorage := inmemory.NewInmemory([][2][]byte{})
-	tempDir, err := ioutil.TempDir("", "sth")
-	require.NoError(t, err)
+	tempDir := t.TempDir()
 	indexPath := filepath.Join(tempDir, "storethehash.index")
 	index, err := index.OpenIndex(indexPath, primaryStorage, bucketBits)
 	require.NoError(t, err)
 	_, found, err := index.Get(key)
 	require.NoError(t, err)
 	require.False(t, found, "Key was not found")
+	err = index.Close()
+	require.NoError(t, err)
 }
 
 func TestIndexGet(t *testing.T) {
@@ -386,8 +395,7 @@ func TestIndexGet(t *testing.T) {
 		{key2, {0x20}},
 		{key3, {0x30}},
 	})
-	tempDir, err := ioutil.TempDir("", "sth")
-	require.NoError(t, err)
+	tempDir := t.TempDir()
 	indexPath := filepath.Join(tempDir, "storethehash.index")
 	i, err := index.OpenIndex(indexPath, primaryStorage, bucketBits)
 	require.NoError(t, err)
@@ -476,23 +484,24 @@ func TestIndexGet(t *testing.T) {
 	require.True(t, found)
 	require.Equal(t, thirdKeyBlock, types.Block{Offset: 2, Size: 1})
 
+	err = i.Close()
+	require.NoError(t, err)
 }
 
 func TestIndexHeader(t *testing.T) {
 	const bucketBits uint8 = 24
-	tempDir, err := ioutil.TempDir("", "sth")
-	require.NoError(t, err)
+	tempDir := t.TempDir()
 	indexPath := filepath.Join(tempDir, "storethehash.index")
-	{
-		primaryStorage := inmemory.NewInmemory([][2][]byte{})
-		_, err := index.OpenIndex(indexPath, primaryStorage, bucketBits)
-		require.NoError(t, err)
-		assertHeader(t, indexPath, bucketBits)
-	}
+
+	primaryStorage := inmemory.NewInmemory([][2][]byte{})
+	i1, err := index.OpenIndex(indexPath, primaryStorage, bucketBits)
+	t.Cleanup(func() { i1.Close() })
+	require.NoError(t, err)
+	assertHeader(t, indexPath, bucketBits)
+
 	// Check that the header doesn't change if the index is opened again.
-	{
-		_, err := index.OpenIndex(indexPath, inmemory.NewInmemory([][2][]byte{}), bucketBits)
-		require.NoError(t, err)
-		assertHeader(t, indexPath, bucketBits)
-	}
+	i2, err := index.OpenIndex(indexPath, inmemory.NewInmemory([][2][]byte{}), bucketBits)
+	t.Cleanup(func() { i2.Close() })
+	require.NoError(t, err)
+	assertHeader(t, indexPath, bucketBits)
 }

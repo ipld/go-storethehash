@@ -3,7 +3,6 @@ package storethehash_test
 import (
 	"context"
 	"errors"
-	"io/ioutil"
 	"math/rand"
 	"path/filepath"
 	"sync"
@@ -23,8 +22,7 @@ func TestParallelism(t *testing.T) {
 	}
 	ctx := context.Background()
 	rand.Seed(time.Now().Unix())
-	tempDir, err := ioutil.TempDir("", "sth")
-	require.NoError(t, err)
+	tempDir := t.TempDir()
 	indexPath := filepath.Join(tempDir, "storethehash.index")
 	dataPath := filepath.Join(tempDir, "storethehash.data")
 
