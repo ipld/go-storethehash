@@ -109,8 +109,8 @@ func (s *Store) Close() error {
 
 	if running {
 		close(s.closing)
+		<-s.closed
 	}
-	<-s.closed
 
 	var err error
 	if s.outstandingWork() {
