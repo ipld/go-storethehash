@@ -28,6 +28,7 @@ type Store struct {
 	burstRate types.Work
 	lastFlush time.Time
 
+	closed       chan struct{}
 	closing      chan struct{}
 	flushNow     chan struct{}
 	syncInterval time.Duration
@@ -50,6 +51,7 @@ func OpenStore(path string, primary primary.PrimaryStorage, indexSizeBits uint8,
 		running:      false,
 		syncInterval: syncInterval,
 		burstRate:    burstRate,
+		closed:       make(chan struct{}),
 		closing:      make(chan struct{}),
 		flushNow:     make(chan struct{}, 1),
 	}
@@ -67,6 +69,7 @@ func (s *Store) Start() {
 }
 
 func (s *Store) run() {
+	defer close(s.closed)
 	d := time.NewTicker(s.syncInterval)
 
 	for {
@@ -106,6 +109,7 @@ func (s *Store) Close() error {
 
 	if running {
 		close(s.closing)
+		<-s.closed
 	}
 
 	var err error
