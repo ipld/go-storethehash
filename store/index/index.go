@@ -175,27 +175,50 @@ func scanIndex(path string, indexSizeBits uint8) (Buckets, SizeBuckets, error) {
 	if err != nil {
 		return nil, nil, err
 	}
-	buffered := bufio.NewReader(file)
-	iter := NewIndexIter(buffered, types.Position(bytesRead))
+	buffered := bufio.NewReaderSize(file, 262144)
+
+	// Current position within the index.
+	iterPos := types.Position(bytesRead)
+	sizeBuffer := make([]byte, SizePrefixSize)
+	scratch := make([]byte, 256)
 	for {
-		data, pos, done, err := iter.Next()
-		if done {
-			break
-		}
-		if err == io.EOF {
-			// The file is corrupt. Though it's not a problem, just take the data we
-			// are able to use and move on.
-			if _, err := file.Seek(0, 2); err != nil {
-				return nil, nil, err
+		_, err = io.ReadFull(buffered, sizeBuffer)
+		if err != nil {
+			if err == io.EOF {
+				break
 			}
-			break
+			return nil, nil, err
 		}
+		size := binary.LittleEndian.Uint32(sizeBuffer)
+
+		pos := iterPos + types.Position(SizePrefixSize)
+		iterPos = pos + types.Position(size)
+		if int(size) > len(scratch) {
+			scratch = make([]byte, size)
+		}
+		data := scratch[:size]
+		_, err = io.ReadFull(buffered, data)
+		if err != nil {
+			if err == io.EOF {
+				// The file is corrupt. Though it's not a problem, just take
+				// the data we are able to use and move on.
+				if _, err = file.Seek(0, 2); err != nil {
+					return nil, nil, err
+				}
+				break
+			}
+			return nil, nil, err
+		}
+
+		bucketPrefix := BucketIndex(binary.LittleEndian.Uint32(data))
+		err = buckets.Put(bucketPrefix, pos)
 		if err != nil {
 			return nil, nil, err
 		}
-		bucketPrefix := BucketIndex(binary.LittleEndian.Uint32(data))
-		buckets.Put(bucketPrefix, pos)
-		sizeBuckets.Put(bucketPrefix, types.Size(len(data)))
+		err = sizeBuckets.Put(bucketPrefix, types.Size(len(data)))
+		if err != nil {
+			return nil, nil, err
+		}
 	}
 	return buckets, sizeBuckets, nil
 }
@@ -449,9 +472,10 @@ func (i *Index) flushBucket(bucket BucketIndex, newData []byte) (types.Block, ty
 	//self.file.syncData()?;
 
 	// Keep the reference to the stored data in the bucket
-	return types.Block{Offset: length + types.Position(SizePrefixSize),
-			Size: types.Size(len(newData) + BucketPrefixSize)},
-		types.Work(toWrite), nil
+	return types.Block{
+		Offset: length + types.Position(SizePrefixSize),
+		Size:   types.Size(len(newData) + BucketPrefixSize),
+	}, types.Work(toWrite), nil
 }
 
 type bucketBlock struct {
