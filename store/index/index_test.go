@@ -501,7 +501,7 @@ func TestIndexHeader(t *testing.T) {
 
 	// Check that the header doesn't change if the index is opened again.
 	i2, err := index.OpenIndex(indexPath, inmemory.NewInmemory([][2][]byte{}), bucketBits)
-	t.Cleanup(func() { i2.Close() })
 	require.NoError(t, err)
+	t.Cleanup(func() { i2.Close() })
 	assertHeader(t, indexPath, bucketBits)
 }

@@ -27,7 +27,7 @@ The format of that append only log is:
 const IndexVersion uint8 = 2
 
 // Number of bytes used for the size prefix of a record list.
-const SizePrefixSize int = 4
+const SizePrefixSize = 4
 
 // Remove the prefix that is used for the bucket.
 //
@@ -78,6 +78,7 @@ type Index struct {
 	outstandingWork   types.Work
 	curPool, nextPool bucketPool
 	length            types.Position
+	cpUpdate          chan struct{}
 }
 
 const indexBufferSize = 32 * 4096
@@ -126,6 +127,10 @@ func OpenIndex(path string, primary primary.PrimaryStorage, indexSizeBits uint8)
 		if err != nil {
 			return nil, err
 		}
+		err = compactIndex(path, indexSizeBits)
+		if err != nil {
+			return nil, err
+		}
 		buckets, sizeBuckets, err = scanIndex(path, indexSizeBits)
 		if err != nil {
 			return nil, err
@@ -136,19 +141,22 @@ func OpenIndex(path string, primary primary.PrimaryStorage, indexSizeBits uint8)
 		}
 		length = types.Position(stat.Size())
 	}
-	return &Index{
-		indexSizeBits,
-		buckets,
-		sizeBuckets,
-		file,
-		bufio.NewWriterSize(file, indexBufferSize),
-		primary,
-		sync.RWMutex{},
-		0,
-		make(bucketPool, BucketPoolSize),
-		make(bucketPool, BucketPoolSize),
-		length,
-	}, nil
+
+	idx := &Index{
+		sizeBits:    indexSizeBits,
+		buckets:     buckets,
+		sizeBuckets: sizeBuckets,
+		file:        file,
+		writer:      bufio.NewWriterSize(file, indexBufferSize),
+		Primary:     primary,
+		bucketLk:    sync.RWMutex{},
+		curPool:     make(bucketPool, BucketPoolSize),
+		nextPool:    make(bucketPool, BucketPoolSize),
+		length:      length,
+		cpUpdate:    make(chan struct{}, 1),
+	}
+	go idx.checkpointer()
+	return idx, nil
 }
 
 func scanIndex(path string, indexSizeBits uint8) (Buckets, SizeBuckets, error) {
@@ -179,6 +187,19 @@ func scanIndex(path string, indexSizeBits uint8) (Buckets, SizeBuckets, error) {
 
 	// Current position within the index.
 	iterPos := types.Position(bytesRead)
+
+	checkpoint, err := readCheckpoint(checkpointPath(path))
+	if err != nil {
+		return nil, nil, err
+	}
+	// If there is a checkpoint, skip everything up to the checkpoint.
+	if checkpoint != 0 {
+		if _, err = file.Seek(checkpoint, 0); err != nil {
+			return nil, nil, err
+		}
+		iterPos = types.Position(checkpoint)
+	}
+
 	sizeBuffer := make([]byte, SizePrefixSize)
 	scratch := make([]byte, 256)
 	for {
@@ -516,6 +537,7 @@ func (i *Index) commit() (types.Work, error) {
 			return 0, err
 		}
 	}
+	i.cpUpdate <- struct{}{}
 
 	return work, nil
 }
@@ -611,6 +633,7 @@ func (i *Index) Sync() error {
 }
 
 func (i *Index) Close() error {
+	close(i.cpUpdate)
 	return i.file.Close()
 }
 
