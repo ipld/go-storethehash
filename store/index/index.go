@@ -184,7 +184,7 @@ func scanIndex(path string, indexSizeBits uint8) (Buckets, SizeBuckets, error) {
 	if err != nil {
 		return nil, nil, err
 	}
-	buffered := bufio.NewReaderSize(file, 262144)
+	buffered := bufio.NewReaderSize(file, 32*1024)
 
 	// Current position within the index.
 	iterPos := types.Position(bytesRead)
@@ -547,6 +547,7 @@ func (i *Index) commit() (types.Work, error) {
 			return 0, err
 		}
 	}
+	// Send signal to update index checkpoint.
 	i.cpUpdate <- struct{}{}
 
 	return work, nil

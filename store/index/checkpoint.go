@@ -17,7 +17,7 @@ import (
 var log = logging.Logger("storethehash/index")
 
 const (
-	// checkpointInterval is how ovten to advance the checkpoint.
+	// checkpointInterval is how often to advance the checkpoint.
 	checkpointInterval = 2 * time.Minute
 	// checkpointRuntime is the maximum time to run checkpoint advancement if
 	// it does not find a current entry to stop on.
@@ -27,6 +27,12 @@ const (
 	compactPercentThreshold = 33
 )
 
+// checkpointer is a goroutine that waits for a signal to update the index
+// checkpoint, and looks for the next checkpoint if it has not been too soon,
+// `checkpointInterval`, since the last time.  The search runs and advances the
+// checkpoint until it has been running for `checkpointRuntime` or until it
+// finds the next live index entry.  The search runs in a separate goroutine so
+// that this function can continue reading the channel used to signal updates.
 func (i *Index) checkpointer() {
 	cpPath := checkpointPath(i.file.Name())
 	cpDone := make(chan struct{})
@@ -38,6 +44,7 @@ func (i *Index) checkpointer() {
 		select {
 		case _, ok := <-i.cpUpdate:
 			if !ok {
+				// Channel closed; shutting down.
 				if cancel != nil {
 					cancel()
 					<-cpDone
@@ -47,6 +54,7 @@ func (i *Index) checkpointer() {
 			hasUpdate = true
 		case <-t.C:
 			if !hasUpdate {
+				// Nothing new, keep waiting.
 				t.Reset(checkpointInterval)
 				continue
 			}
@@ -78,6 +86,7 @@ func (i *Index) checkpointer() {
 				}
 			}()
 		case <-cpDone:
+			// Finished the checkpoint update, cleanup and reset timer.
 			cancel()
 			cancel = nil
 			hasUpdate = false
@@ -270,6 +279,9 @@ func compactIndex(path string, indexSizeBits uint8) error {
 	return nil
 }
 
+// runtimeCompactIndex compacts the index during runtime by locking out any
+// modifications to the index and changing to use the new index, and rebuilding
+// the buckets, after compaction.
 func (i *Index) runtimeCompactIndex() error {
 	indexPath := i.file.Name()
 
