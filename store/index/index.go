@@ -79,6 +79,7 @@ type Index struct {
 	curPool, nextPool bucketPool
 	length            types.Position
 	cpUpdate          chan struct{}
+	gcMutex           sync.RWMutex
 }
 
 const indexBufferSize = 32 * 4096
@@ -248,6 +249,9 @@ func scanIndex(path string, indexSizeBits uint8) (Buckets, SizeBuckets, error) {
 //
 // The key needs to be a cryptographically secure hash and at least 4 bytes long.
 func (i *Index) Put(key []byte, location types.Block) error {
+	i.gcMutex.RLock()
+	defer i.gcMutex.RUnlock()
+
 	// Get record list and bucket index
 	bucket, err := i.getBucketIndex(key)
 	if err != nil {
@@ -355,6 +359,9 @@ func (i *Index) Put(key []byte, location types.Block) error {
 
 // Update a key together with a file offset into the index.
 func (i *Index) Update(key []byte, location types.Block) error {
+	i.gcMutex.RLock()
+	defer i.gcMutex.RUnlock()
+
 	// Get record list and bucket index
 	bucket, err := i.getBucketIndex(key)
 	if err != nil {
@@ -394,6 +401,9 @@ func (i *Index) Update(key []byte, location types.Block) error {
 
 // Remove a key from index
 func (i *Index) Remove(key []byte) (bool, error) {
+	i.gcMutex.RLock()
+	defer i.gcMutex.RUnlock()
+
 	// Get record list and bucket index
 	bucket, err := i.getBucketIndex(key)
 	if err != nil {
@@ -543,7 +553,6 @@ func (i *Index) commit() (types.Work, error) {
 }
 
 func (i *Index) readBucketInfo(bucket BucketIndex) ([]byte, types.Position, types.Size, error) {
-
 	data, ok := i.nextPool[bucket]
 	if ok {
 		return data, 0, 0, nil
@@ -579,6 +588,9 @@ func (i *Index) readDiskBuckets(bucket BucketIndex, indexOffset types.Position, 
 
 // Get the file offset in the primary storage of a key.
 func (i *Index) Get(key []byte) (types.Block, bool, error) {
+	i.gcMutex.RLock()
+	defer i.gcMutex.RUnlock()
+
 	// Get record list and bucket index
 	bucket, err := i.getBucketIndex(key)
 	if err != nil {
@@ -616,10 +628,16 @@ func (i *Index) Get(key []byte) (types.Block, bool, error) {
 }
 
 func (i *Index) Flush() (types.Work, error) {
+	i.gcMutex.RLock()
+	defer i.gcMutex.RUnlock()
+
 	return i.commit()
 }
 
 func (i *Index) Sync() error {
+	i.gcMutex.RLock()
+	defer i.gcMutex.RUnlock()
+
 	if err := i.writer.Flush(); err != nil {
 		return err
 	}

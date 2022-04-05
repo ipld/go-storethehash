@@ -8,6 +8,7 @@ require (
 	github.com/ipfs/go-ipfs-blockstore v1.0.4-0.20210205083733-fb07d7bc5aec
 	github.com/ipfs/go-ipfs-blocksutil v0.0.1
 	github.com/ipfs/go-ipfs-util v0.0.2
+	github.com/ipfs/go-log/v2 v2.5.1
 	github.com/ipld/go-car v0.1.0
 	github.com/multiformats/go-multihash v0.1.0
 	github.com/stretchr/testify v1.7.0
