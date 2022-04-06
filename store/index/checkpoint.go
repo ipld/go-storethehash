@@ -24,7 +24,7 @@ const (
 	checkpointRuntime = time.Minute
 	// compactPercentThreshold is percent of the index that must be eliminated
 	// by the checkpoint for compaction to take place.
-	compactPercentThreshold = 33
+	compactPercentThreshold = 50
 )
 
 // checkpointer is a goroutine that waits for a signal to update the index
@@ -34,10 +34,10 @@ const (
 // finds the next live index entry.  The search runs in a separate goroutine so
 // that this function can continue reading the channel used to signal updates.
 func (i *Index) checkpointer() {
-	cpPath := checkpointPath(i.file.Name())
-	cpDone := make(chan struct{})
+	cpDone := make(chan bool)
 	var cancel context.CancelFunc
 	hasUpdate := true
+	var unfinishedChecks int
 	t := time.NewTimer(checkpointInterval)
 
 	for {
@@ -59,51 +59,67 @@ func (i *Index) checkpointer() {
 				continue
 			}
 
+			var ctx context.Context
+			ctx, cancel = context.WithTimeout(context.Background(), checkpointRuntime)
 			go func() {
-				defer func() {
-					cpDone <- struct{}{}
-				}()
-				var ctx context.Context
-				ctx, cancel = context.WithTimeout(context.Background(), checkpointRuntime)
-				cp, err := i.updateCheckpoint(ctx, cpPath)
+				cp, err := i.updateCheckpoint(ctx)
 				if err != nil {
 					log.Errorw("Failed to update checkpoint", "err", err)
+					cpDone <- false
 					return
 				}
 
-				// Only compact if checkpoint update finished and did not timeout.
-				if ctx.Err() == nil {
-					// See if the checkpoint reduces the size enough to make it worth it.
-					if (cp*100)/int64(i.length) >= compactPercentThreshold {
-						log.Infow("Checkpoint reached compaction threshold", "percent", compactPercentThreshold,
-							"checkpoint", cp, "total", i.length)
-						start := time.Now()
-						if err = i.runtimeCompactIndex(); err != nil {
-							log.Errorw("Failed to compact index", "err", err)
-						}
-						log.Debugw("Compaction time", "elapsed", time.Since(start))
-					}
+				// If checkpoint update timed out and did not finish.
+				if ctx.Err() != nil {
+					unfinishedChecks++
+					log.Debugf("Checkpoint update not finished, will resume after", checkpointInterval)
+					cpDone <- true // resume search at next timer interval
+					return
 				}
+				log.Debugf("Checkpoint update finished after %d previous unfinished checks", unfinishedChecks)
+				unfinishedChecks = 0
+
+				// See if the checkpoint reduces the size enough to make it
+				// worth it. Reducing the size of the index does not not
+				// improve runtime performance. It only reduces storage space
+				// and helps startup time, but does cause a pause in operation
+				// while compaction is done.
+				if checkpointAtThreshold(cp, int64(i.length)) {
+					log.Infow("Checkpoint reached compaction threshold", "percent", compactPercentThreshold,
+						"checkpoint", cp, "total", i.length)
+					start := time.Now()
+					if err = i.runtimeCompactIndex(); err != nil {
+						log.Errorw("Failed to compact index", "err", err)
+					}
+					log.Debugw("Compaction time", "elapsed", time.Since(start))
+				}
+				cpDone <- false
 			}()
-		case <-cpDone:
+		case hasUpdate = <-cpDone:
 			// Finished the checkpoint update, cleanup and reset timer.
 			cancel()
 			cancel = nil
-			hasUpdate = false
 			t.Reset(checkpointInterval)
 		}
 	}
 }
 
+func checkpointAtThreshold(checkpoint, totalSize int64) bool {
+	if checkpoint == 0 || totalSize == 0 {
+		return false
+	}
+	return (checkpoint*100)/int64(totalSize) >= compactPercentThreshold
+}
+
 // updateCheckpoint attempts to advance the checkpoint from its previous
 // location. The checkpoint is returned.
-func (i *Index) updateCheckpoint(ctx context.Context, cpPath string) (int64, error) {
-	checkpoint, err := readCheckpoint(cpPath)
+func (i *Index) updateCheckpoint(ctx context.Context) (int64, error) {
+	checkpoint, err := readCheckpoint(i.cpPath)
 	if err != nil {
 		return 0, fmt.Errorf("could not read checkpoint: %w", err)
 	}
 
-	newCheckpoint, err := i.nextCheckpoint(ctx, cpPath, checkpoint)
+	newCheckpoint, err := i.nextCheckpoint(ctx, checkpoint)
 	if err != nil {
 		return 0, fmt.Errorf("error finding next checkpoint: %w", err)
 	}
@@ -113,7 +129,7 @@ func (i *Index) updateCheckpoint(ctx context.Context, cpPath string) (int64, err
 		return checkpoint, nil
 	}
 
-	if err = writeCheckpoint(cpPath, newCheckpoint); err != nil {
+	if err = writeCheckpoint(i.cpPath, newCheckpoint); err != nil {
 		return 0, err
 	}
 
@@ -123,7 +139,7 @@ func (i *Index) updateCheckpoint(ctx context.Context, cpPath string) (int64, err
 
 // nextCheckpoint scans the index starting at the specified checkpoint, and
 // returns the location of the first index entry that is still in use.
-func (i *Index) nextCheckpoint(ctx context.Context, cpPath string, checkpoint int64) (int64, error) {
+func (i *Index) nextCheckpoint(ctx context.Context, checkpoint int64) (int64, error) {
 	file, err := openFileForScan(i.file.Name())
 	if err != nil {
 		return 0, err
@@ -217,9 +233,8 @@ func writeCheckpoint(cpPath string, checkpoint int64) error {
 
 // compactIndex copies the existing index file to a new file, omitting all data
 // that the checkpoint skips over.
-func compactIndex(path string, indexSizeBits uint8) error {
+func compactIndex(indexPath, cpPath string, indexSizeBits uint8) error {
 	// Read the checkpoint.
-	cpPath := checkpointPath(path)
 	checkpoint, err := readCheckpoint(cpPath)
 	if err != nil {
 		return fmt.Errorf("could not read checkpoint: %w", err)
@@ -229,14 +244,14 @@ func compactIndex(path string, indexSizeBits uint8) error {
 		return nil
 	}
 
-	file, err := openFileForScan(path)
+	file, err := openFileForScan(indexPath)
 	if err != nil {
 		return err
 	}
 	defer file.Close()
 
 	// Create new index file.
-	tmp, err := os.Create(path + ".tmp")
+	tmp, err := os.Create(indexPath + ".tmp")
 	if err != nil {
 		return err
 	}
@@ -297,7 +312,7 @@ func (i *Index) runtimeCompactIndex() error {
 		return err
 	}
 
-	if err = compactIndex(indexPath, i.sizeBits); err != nil {
+	if err = compactIndex(indexPath, i.cpPath, i.sizeBits); err != nil {
 		return err
 	}
 

@@ -78,6 +78,7 @@ type Index struct {
 	outstandingWork   types.Work
 	curPool, nextPool bucketPool
 	length            types.Position
+	cpPath            string
 	cpUpdate          chan struct{}
 	gcMutex           sync.RWMutex
 }
@@ -96,6 +97,8 @@ func OpenIndex(path string, primary primary.PrimaryStorage, indexSizeBits uint8)
 	var buckets Buckets
 	var sizeBuckets SizeBuckets
 	var length types.Position
+	cpPath := checkpointPath(path)
+
 	stat, err := os.Stat(path)
 	if os.IsNotExist(err) {
 		header := FromHeader(NewHeader(indexSizeBits))
@@ -128,10 +131,23 @@ func OpenIndex(path string, primary primary.PrimaryStorage, indexSizeBits uint8)
 		if err != nil {
 			return nil, err
 		}
-		err = compactIndex(path, indexSizeBits)
+
+		// Compact the index if the checkpoint is far enough along.
+		checkpoint, err := readCheckpoint(cpPath)
 		if err != nil {
 			return nil, err
 		}
+		fi, err := os.Stat(path)
+		if err != nil {
+			return nil, err
+		}
+		if checkpointAtThreshold(checkpoint, fi.Size()) {
+			err = compactIndex(path, cpPath, indexSizeBits)
+			if err != nil {
+				return nil, err
+			}
+		}
+
 		buckets, sizeBuckets, err = scanIndex(path, indexSizeBits)
 		if err != nil {
 			return nil, err
@@ -154,6 +170,7 @@ func OpenIndex(path string, primary primary.PrimaryStorage, indexSizeBits uint8)
 		curPool:     make(bucketPool, BucketPoolSize),
 		nextPool:    make(bucketPool, BucketPoolSize),
 		length:      length,
+		cpPath:      cpPath,
 		cpUpdate:    make(chan struct{}, 1),
 	}
 	go idx.checkpointer()
