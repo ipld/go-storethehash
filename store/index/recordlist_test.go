@@ -288,18 +288,18 @@ func TestRecordListGetKey(t *testing.T) {
 	require.Equal(t, blk, types.Block{Offset: types.Position(6), Size: types.Size(6)})
 
 	// Key that is shorter than the inserted ones cannot match
-	blk, has = records.Get([]byte("d"))
+	_, has = records.Get([]byte("d"))
 	require.False(t, has)
 
 	// Key that is before all keys
-	blk, has = records.Get([]byte("ABCD"))
+	_, has = records.Get([]byte("ABCD"))
 	require.False(t, has)
 
 	// Key that is after all keys
-	blk, has = records.Get([]byte("zzzzz"))
+	_, has = records.Get([]byte("zzzzz"))
 	require.False(t, has)
 
 	// Key that matches a prefix of some keys, but doesn't match fully
-	blk, has = records.Get([]byte("dg"))
+	_, has = records.Get([]byte("dg"))
 	require.False(t, has)
 }
