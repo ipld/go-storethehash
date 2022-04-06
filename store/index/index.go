@@ -132,23 +132,11 @@ func OpenIndex(path string, primary primary.PrimaryStorage, indexSizeBits uint8)
 			return nil, err
 		}
 
-		// Compact the index if the checkpoint is far enough along.
 		checkpoint, err := readCheckpoint(cpPath)
 		if err != nil {
 			return nil, err
 		}
-		fi, err := os.Stat(path)
-		if err != nil {
-			return nil, err
-		}
-		if checkpointAtThreshold(checkpoint, fi.Size()) {
-			err = compactIndex(path, cpPath, indexSizeBits)
-			if err != nil {
-				return nil, err
-			}
-		}
-
-		buckets, sizeBuckets, err = scanIndex(path, indexSizeBits)
+		buckets, sizeBuckets, err = scanIndex(path, indexSizeBits, checkpoint, nil, nil)
 		if err != nil {
 			return nil, err
 		}
@@ -177,7 +165,7 @@ func OpenIndex(path string, primary primary.PrimaryStorage, indexSizeBits uint8)
 	return idx, nil
 }
 
-func scanIndex(path string, indexSizeBits uint8) (Buckets, SizeBuckets, error) {
+func scanIndex(path string, indexSizeBits uint8, checkpoint int64, buckets Buckets, sizeBuckets SizeBuckets) (Buckets, SizeBuckets, error) {
 	// this is a single sequential read across the whole index
 	file, err := openFileForScan(path)
 	if err != nil {
@@ -186,6 +174,7 @@ func scanIndex(path string, indexSizeBits uint8) (Buckets, SizeBuckets, error) {
 	defer func() {
 		_ = file.Close()
 	}()
+
 	header, bytesRead, err := ReadHeader(file)
 	if err != nil {
 		return nil, nil, err
@@ -193,23 +182,28 @@ func scanIndex(path string, indexSizeBits uint8) (Buckets, SizeBuckets, error) {
 	if header.BucketsBits != indexSizeBits {
 		return nil, nil, types.ErrIndexWrongBitSize{header.BucketsBits, indexSizeBits}
 	}
-	buckets, err := NewBuckets(indexSizeBits)
-	if err != nil {
-		return nil, nil, err
+	if buckets == nil {
+		buckets, err = NewBuckets(indexSizeBits)
+		if err != nil {
+			return nil, nil, err
+		}
+	} else if len(buckets) != 1<<indexSizeBits {
+		panic("wrong size of buckets")
 	}
-	sizeBuckets, err := NewSizeBuckets(indexSizeBits)
-	if err != nil {
-		return nil, nil, err
+	if sizeBuckets == nil {
+		sizeBuckets, err = NewSizeBuckets(indexSizeBits)
+		if err != nil {
+			return nil, nil, err
+		}
+	} else if len(sizeBuckets) != 1<<indexSizeBits {
+		panic("wrong size of sizeBbuckets")
 	}
+
 	buffered := bufio.NewReaderSize(file, 32*1024)
 
 	// Current position within the index.
 	iterPos := types.Position(bytesRead)
 
-	checkpoint, err := readCheckpoint(checkpointPath(path))
-	if err != nil {
-		return nil, nil, err
-	}
 	// If there is a checkpoint, skip everything up to the checkpoint.
 	if checkpoint != 0 {
 		if _, err = file.Seek(checkpoint, 0); err != nil {
@@ -218,8 +212,15 @@ func scanIndex(path string, indexSizeBits uint8) (Buckets, SizeBuckets, error) {
 		iterPos = types.Position(checkpoint)
 	}
 
+	fi, err := file.Stat()
+	if err != nil {
+		return nil, nil, err
+	}
+	totalToScan := fi.Size() - int64(iterPos)
+
 	sizeBuffer := make([]byte, SizePrefixSize)
 	scratch := make([]byte, 256)
+	var percentDone int64
 	for {
 		_, err = io.ReadFull(buffered, sizeBuffer)
 		if err != nil {
@@ -257,6 +258,11 @@ func scanIndex(path string, indexSizeBits uint8) (Buckets, SizeBuckets, error) {
 		err = sizeBuckets.Put(bucketPrefix, types.Size(len(data)))
 		if err != nil {
 			return nil, nil, err
+		}
+
+		if (int64(iterPos)-checkpoint)*100/totalToScan > percentDone {
+			percentDone = (int64(iterPos) - checkpoint) * 100 / totalToScan
+			fmt.Printf("Scan %d%% done\n", percentDone)
 		}
 	}
 	return buckets, sizeBuckets, nil
