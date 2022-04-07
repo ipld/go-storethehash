@@ -21,6 +21,9 @@ func upgradeIndex(name, headerPath string) error {
 	defer inFile.Close()
 
 	version, bucketBits, _, err := readOldHeader(inFile)
+	if err != nil {
+		return err
+	}
 	if version != 2 {
 		return fmt.Errorf("cannot convert unknown header version")
 	}
