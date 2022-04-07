@@ -26,7 +26,7 @@ The format of that append only log is:
 ```
 */
 const indexFileSizeLimit = 1024 * 1024 * 1024
-const IndexVersion uint8 = 2
+const IndexVersion uint8 = 3
 
 // Number of bytes used for the size prefix of a record list.
 const SizePrefixSize = 4
@@ -56,7 +56,7 @@ type Header struct {
 	FirstFile uint32
 }
 
-func NewHeader(bucketsBits byte) Header {
+func newHeader(bucketsBits byte) Header {
 	return Header{
 		Version:     IndexVersion,
 		BucketsBits: bucketsBits,
@@ -110,9 +110,14 @@ func OpenIndex(path string, primary primary.PrimaryStorage, indexSizeBits uint8)
 		return nil, err
 	}
 
+	err = upgradeIndex(path, headerPath)
+	if err != nil {
+		return nil, err
+	}
+
 	header, err := readHeader(headerPath)
 	if os.IsNotExist(err) {
-		header = NewHeader(indexSizeBits)
+		header = newHeader(indexSizeBits)
 		if err = writeHeader(headerPath, header); err != nil {
 			return nil, err
 		}
@@ -297,6 +302,8 @@ func scanIndexFile(basePath string, fileNum uint32, indexSizeBits uint8, buckets
 			return err
 		}
 	}
+	// Write this to stdout so that a human user knows that the indexer is busy
+	// starting up, without including this with in log output.
 	fmt.Println("Scanned", indexPath)
 	return nil
 }
