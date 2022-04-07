@@ -124,8 +124,6 @@ func (i *Index) gcIndexFile(ctx context.Context, fileNum uint32, indexPath strin
 	}
 	defer file.Close()
 
-	var iterPos int64
-
 	inBuf := bufio.NewReader(file)
 	sizeBuffer := make([]byte, SizePrefixSize)
 	scratch := make([]byte, 256)
@@ -141,9 +139,6 @@ func (i *Index) gcIndexFile(ctx context.Context, fileNum uint32, indexPath strin
 			return false, err
 		}
 		size := binary.LittleEndian.Uint32(sizeBuffer)
-
-		pos := iterPos + int64(SizePrefixSize)
-		iterPos = pos + int64(size)
 		if int(size) > len(scratch) {
 			scratch = make([]byte, size)
 		}
