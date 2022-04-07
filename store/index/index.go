@@ -25,7 +25,38 @@ The format of that append only log is:
     | Size of the Recordlist |   Recordlist   | … |
 ```
 */
+
+// In-memory buckets are used to track the location of records within the index
+// files. The buckets map a bit-prefix to a bucketPos value.  The bucketPos
+// encodes both the index file number and the record offset within that
+// file. If 1GiB is the maximum size for a file, then the local data offset is
+// kept in the first GiB worth of bits (30) of the bucketPos.  The file number
+// is kept in the bits above that.  It is necessary for the file number to wrap
+// before it reaches a value greater than the number of bits available to
+// record it in the buckerPos.  This results in a trade-off between allowing
+// larger files or allowing more files, but with the same overall maximum
+// storage.
+//
+// With a 1GiB local offset taking the first 30 bits of a 64 bit number, that
+// leaves 34 bits left to encode the file number.  Instead of having logic to
+// wrap the file number at the largest value allowed by the available bits, the
+// file number is represented as a 32-bit value that always wraps at 4GiB.
+//
+// A 32-bit file number means there should never be 4GiB of active index files.
+// This also means that indexFileSizeLimit should never be greater than 4GiB.
+// Using a 1GiB indexFileSizeLimit and a 4GiB file number limit, results in 2
+// bits unused in the bucketPos address space.  With a smaller file size more
+// bits would be unused.
+//
+// Smaller values for indexFileSizeLimit result in more files needed to hold
+// the index, but also more granular GC.  A value too small risks running out
+// of inodes on the file system, and a value too large means that there is more
+// stale data that GC cannot remove.  Using a 1GiB index file size limit offers
+// a good balance, and this value should not be changed (other than for
+// testing) by more than a factor of 4.
 const indexFileSizeLimit = 1024 * 1024 * 1024
+
+// IndexVersion is stored in the header data to indicate how to interpred index data.
 const IndexVersion uint8 = 3
 
 // Number of bytes used for the size prefix of a record list.
@@ -67,7 +98,6 @@ type Index struct {
 	sizeBits          uint8
 	buckets           Buckets
 	sizeBuckets       SizeBuckets
-	fileBuckets       FileBuckets
 	file              *os.File
 	fileNum           uint32
 	headerPath        string
@@ -105,10 +135,6 @@ func OpenIndex(path string, primary primary.PrimaryStorage, indexSizeBits uint8)
 	if err != nil {
 		return nil, err
 	}
-	fileBuckets, err := NewFileBuckets(indexSizeBits)
-	if err != nil {
-		return nil, err
-	}
 
 	err = upgradeIndex(path, headerPath)
 	if err != nil {
@@ -135,7 +161,7 @@ func OpenIndex(path string, primary primary.PrimaryStorage, indexSizeBits uint8)
 			return nil, types.ErrIndexWrongBitSize{header.BucketsBits, indexSizeBits}
 		}
 
-		lastIndexNum, err = scanIndex(path, header.FirstFile, indexSizeBits, buckets, sizeBuckets, fileBuckets)
+		lastIndexNum, err = scanIndex(path, header.FirstFile, indexSizeBits, buckets, sizeBuckets)
 		if err != nil {
 			return nil, err
 		}
@@ -156,7 +182,6 @@ func OpenIndex(path string, primary primary.PrimaryStorage, indexSizeBits uint8)
 		sizeBits:    indexSizeBits,
 		buckets:     buckets,
 		sizeBuckets: sizeBuckets,
-		fileBuckets: fileBuckets,
 		file:        file,
 		fileNum:     lastIndexNum,
 		headerPath:  headerPath,
@@ -180,20 +205,17 @@ func indexFileName(basePath string, fileNum uint32) string {
 	return fmt.Sprintf("%s.%d", basePath, fileNum)
 }
 
-func scanIndex(basePath string, fileNum uint32, indexSizeBits uint8, buckets Buckets, sizeBuckets SizeBuckets, fileBuckets FileBuckets) (uint32, error) {
+func scanIndex(basePath string, fileNum uint32, indexSizeBits uint8, buckets Buckets, sizeBuckets SizeBuckets) (uint32, error) {
 	if len(buckets) != 1<<indexSizeBits {
 		panic("wrong size of buckets")
 	}
 	if len(sizeBuckets) != 1<<indexSizeBits {
 		panic("wrong size of sizeBuckets")
 	}
-	if len(fileBuckets) != 1<<indexSizeBits {
-		panic("wrong size of fileBuckets")
-	}
 
 	var lastFileNum uint32
 	for {
-		err := scanIndexFile(basePath, fileNum, indexSizeBits, buckets, sizeBuckets, fileBuckets)
+		err := scanIndexFile(basePath, fileNum, indexSizeBits, buckets, sizeBuckets)
 		if err != nil {
 			if os.IsNotExist(err) {
 				break
@@ -245,7 +267,7 @@ func (i *Index) StorageSize() (int64, error) {
 	return size, nil
 }
 
-func scanIndexFile(basePath string, fileNum uint32, indexSizeBits uint8, buckets Buckets, sizeBuckets SizeBuckets, fileBuckets FileBuckets) error {
+func scanIndexFile(basePath string, fileNum uint32, indexSizeBits uint8, buckets Buckets, sizeBuckets SizeBuckets) error {
 	indexPath := indexFileName(basePath, fileNum)
 
 	// This is a single sequential read across the index file.
@@ -289,15 +311,11 @@ func scanIndexFile(basePath string, fileNum uint32, indexSizeBits uint8, buckets
 		}
 
 		bucketPrefix := BucketIndex(binary.LittleEndian.Uint32(data))
-		err = buckets.Put(bucketPrefix, types.Position(pos))
+		err = buckets.Put(bucketPrefix, localPosToBucketPos(pos, fileNum))
 		if err != nil {
 			return err
 		}
 		err = sizeBuckets.Put(bucketPrefix, types.Size(len(data)))
-		if err != nil {
-			return err
-		}
-		err = fileBuckets.Put(bucketPrefix, fileNum)
 		if err != nil {
 			return err
 		}
@@ -533,13 +551,20 @@ func (i *Index) getRecordsFromBucket(bucket BucketIndex) (RecordList, error) {
 	return records, nil
 }
 
-func (i *Index) flushBucket(bucket BucketIndex, newData []byte) (types.Block, uint32, types.Work, error) {
-	if i.length > indexFileSizeLimit {
+func (i *Index) flushBucket(bucket BucketIndex, newData []byte) (types.Block, types.Work, error) {
+	if i.length >= indexFileSizeLimit {
 		fileNum := i.fileNum + 1
 		indexPath := indexFileName(i.basePath, fileNum)
+		// If the index file being opened already exists then fileNum has
+		// wrapped and there are 4GiB of index files.  This means that
+		// indexFileSizeLimit is set far too small or GC is disabled.
+		if _, err := os.Stat(indexPath); !os.IsNotExist(err) {
+			log.Warnw("Creating index file overwrites existing. Check that file size limit is not too small resulting in too many files.",
+				"indexFileSizeLimit", indexFileSizeLimit, "indexPath", indexPath)
+		}
 		file, err := openFileAppend(indexPath)
 		if err != nil {
-			return types.Block{}, 0, 0, err
+			return types.Block{}, 0, err
 		}
 		i.fileNum = fileNum
 		i.writer.Flush()
@@ -551,40 +576,37 @@ func (i *Index) flushBucket(bucket BucketIndex, newData []byte) (types.Block, ui
 
 	// Write new data to disk. The record list is prefixed with bucket they are in. This is
 	// needed in order to reconstruct the in-memory buckets from the index itself.
-	// TODO vmx 2020-11-25: This should be an error and not a panic
 	newDataSize := make([]byte, SizePrefixSize)
 	binary.LittleEndian.PutUint32(newDataSize, uint32(len(newData))+uint32(BucketPrefixSize))
 	_, err := i.writer.Write(newDataSize)
 	if err != nil {
-		return types.Block{}, 0, 0, err
+		return types.Block{}, 0, err
 	}
 
 	bucketPrefixBuffer := make([]byte, BucketPrefixSize)
 	binary.LittleEndian.PutUint32(bucketPrefixBuffer, uint32(bucket))
 	if _, err = i.writer.Write(bucketPrefixBuffer); err != nil {
-		return types.Block{}, 0, 0, err
+		return types.Block{}, 0, err
 	}
 
 	if _, err = i.writer.Write(newData); err != nil {
-		return types.Block{}, 0, 0, err
+		return types.Block{}, 0, err
 	}
 	length := i.length
 	toWrite := types.Position(len(newData) + BucketPrefixSize + SizePrefixSize)
 	i.length += toWrite
-	// Fsyncs are expensive
-	//self.file.syncData()?;
+	// Fsyncs are expensive, so do not do them here; do in explicit Sync().
 
 	// Keep the reference to the stored data in the bucket
 	return types.Block{
-		Offset: length + types.Position(SizePrefixSize),
+		Offset: localPosToBucketPos(int64(length+SizePrefixSize), i.fileNum),
 		Size:   types.Size(len(newData) + BucketPrefixSize),
-	}, i.fileNum, types.Work(toWrite), nil
+	}, types.Work(toWrite), nil
 }
 
 type bucketBlock struct {
-	bucket  BucketIndex
-	blk     types.Block
-	fileNum uint32
+	bucket BucketIndex
+	blk    types.Block
 }
 
 func (i *Index) commit() (types.Work, error) {
@@ -600,11 +622,11 @@ func (i *Index) commit() (types.Work, error) {
 	blks := make([]bucketBlock, 0, len(i.curPool))
 	var work types.Work
 	for bucket, data := range i.curPool {
-		blk, fileNum, newWork, err := i.flushBucket(bucket, data)
+		blk, newWork, err := i.flushBucket(bucket, data)
 		if err != nil {
 			return 0, err
 		}
-		blks = append(blks, bucketBlock{bucket, blk, fileNum})
+		blks = append(blks, bucketBlock{bucket, blk})
 		work += newWork
 	}
 	i.bucketLk.Lock()
@@ -615,9 +637,6 @@ func (i *Index) commit() (types.Work, error) {
 			return 0, err
 		}
 		if err := i.sizeBuckets.Put(bucket, blk.blk.Size); err != nil {
-			return 0, err
-		}
-		if err := i.fileBuckets.Put(bucket, blk.fileNum); err != nil {
 			return 0, err
 		}
 	}
@@ -639,7 +658,7 @@ func (i *Index) readBucketInfo(bucket BucketIndex) ([]byte, types.Position, type
 	if ok {
 		return data, 0, 0, 0, nil
 	}
-	indexOffset, err := i.buckets.Get(bucket)
+	bucketPos, err := i.buckets.Get(bucket)
 	if err != nil {
 		return nil, 0, 0, 0, err
 	}
@@ -647,14 +666,13 @@ func (i *Index) readBucketInfo(bucket BucketIndex) ([]byte, types.Position, type
 	if err != nil {
 		return nil, 0, 0, 0, err
 	}
-	fileNum, err := i.fileBuckets.Get(bucket)
-	if err != nil {
-		return nil, 0, 0, 0, err
-	}
-	return nil, indexOffset, recordListSize, fileNum, nil
+	localPos, fileNum := localizeBucketPos(bucketPos)
+	return nil, localPos, recordListSize, fileNum, nil
 }
 
 func (i *Index) readDiskBuckets(bucket BucketIndex, indexOffset types.Position, recordListSize types.Size, fileNum uint32) (RecordList, error) {
+	// indexOffset should never be 0 is there is a bucket, because it is always
+	// SizePrefixSize into the stored data.
 	if indexOffset == 0 {
 		return nil, nil
 	}
@@ -881,4 +899,37 @@ func openNewFileAppend(name string) (*os.File, error) {
 
 func openFileForScan(name string) (*os.File, error) {
 	return os.OpenFile(name, os.O_RDONLY, 0644)
+}
+
+func bucketPosToFileNum(pos types.Position) (bool, uint32) {
+	// Bucket pos 0 means there is no data in the bucket, so indicate empty bucket.
+	if pos == 0 {
+		return false, 0
+	}
+	// The start of the entry, not the position of the record, determines which
+	// is file is used.  The record begins SizePrefixSize before pos.  This
+	// matters only if pos is slightly after a indexFileSizeLimit boundry, but
+	// the adjusted position is not.
+	return true, uint32((pos - SizePrefixSize) / indexFileSizeLimit)
+}
+
+func localPosToBucketPos(pos int64, fileNum uint32) types.Position {
+	// Valid position must be non-zero, at least SizePrefixSize
+	if pos == 0 {
+		panic("invalid local offset")
+	}
+	// fileNum is a 32bit value and will wrap at 4GiB (4294967296).  So that is the maximum number of index files possible.
+	return types.Position(fileNum)*indexFileSizeLimit + types.Position(pos)
+}
+
+// localizeBucketPos decodes a bucketPos into a local pos and file number.
+func localizeBucketPos(pos types.Position) (types.Position, uint32) {
+	// Bucket pos indicated empty bucket, return 0 local pos to indicate empty.
+	ok, fileNum := bucketPosToFileNum(pos)
+	if !ok {
+		return 0, 0
+	}
+	// Subtract file offset to get pos within its local file.
+	localPos := pos - (types.Position(fileNum) * indexFileSizeLimit)
+	return localPos, fileNum
 }

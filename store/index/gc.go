@@ -62,7 +62,7 @@ func (i *Index) garbageCollector() {
 				if fileCount == 0 {
 					log.Info("GC finished, no index files to remove")
 				} else {
-					log.Infow("GC finished, removed index files", "count", fileCount)
+					log.Infow("GC finished, removed index files", "fileCount", fileCount)
 				}
 			}()
 		case <-gcDone:
@@ -145,7 +145,7 @@ func (i *Index) gcIndexFile(ctx context.Context, fileNum uint32, indexPath strin
 		data := scratch[:size]
 		if _, err = io.ReadFull(inBuf, data); err != nil {
 			if err == io.EOF {
-				// The data was not been written yet, or the file is corrupt.
+				// The data has not been written yet, or the file is corrupt.
 				// Take the data we are able to use and move on.
 				break
 			}
@@ -154,12 +154,13 @@ func (i *Index) gcIndexFile(ctx context.Context, fileNum uint32, indexPath strin
 
 		bucketPrefix := BucketIndex(binary.LittleEndian.Uint32(data))
 		i.bucketLk.Lock()
-		bucketFile, err := i.fileBuckets.Get(bucketPrefix)
+		bucketPos, err := i.buckets.Get(bucketPrefix)
 		i.bucketLk.Unlock()
 		if err != nil {
 			return false, err
 		}
-		if bucketFile == fileNum {
+		ok, fnum := bucketPosToFileNum(bucketPos)
+		if ok && fnum == fileNum {
 			// This index file is in use by the bucket, so no GC for this file.
 			return false, nil
 		}
