@@ -42,7 +42,7 @@ func (b Buckets) Get(index BucketIndex) (types.Position, error) {
 // 2 ^ bits.
 type SizeBuckets []types.Size
 
-// NewBuckets returns a list of buckets for the given index size in bits
+// NewSizeBuckets returns a list of buckets for the given index size in bits
 func NewSizeBuckets(indexSizeBits uint8) (SizeBuckets, error) {
 	if indexSizeBits > 32 {
 		return nil, types.ErrIndexTooLarge
@@ -61,6 +61,37 @@ func (b SizeBuckets) Put(index BucketIndex, offset types.Size) error {
 
 // Get updates returns the value at the given index
 func (b SizeBuckets) Get(index BucketIndex) (types.Size, error) {
+	if int(index) > len(b)-1 {
+		return 0, types.ErrOutOfBounds
+	}
+	return b[int(index)], nil
+}
+
+// FileBuckets contains file number of all record lists
+//
+// The generic specifies how many bits are used to create the buckets. The number of buckets is
+// 2 ^ bits.
+type FileBuckets []uint32
+
+// NewFileBuckets returns a list of buckets for the given index size in bits
+func NewFileBuckets(indexSizeBits uint8) (FileBuckets, error) {
+	if indexSizeBits > 32 {
+		return nil, types.ErrIndexTooLarge
+	}
+	return make(FileBuckets, 1<<indexSizeBits), nil
+}
+
+// Put updates a file bucket value
+func (b FileBuckets) Put(index BucketIndex, fileNum uint32) error {
+	if int(index) > len(b)-1 {
+		return types.ErrOutOfBounds
+	}
+	b[int(index)] = fileNum
+	return nil
+}
+
+// Get updates returns the value at the given index
+func (b FileBuckets) Get(index BucketIndex) (uint32, error) {
 	if int(index) > len(b)-1 {
 		return 0, types.ErrOutOfBounds
 	}

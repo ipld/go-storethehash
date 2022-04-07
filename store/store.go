@@ -459,3 +459,7 @@ func (s *Store) GetSize(key []byte) (types.Size, bool, error) {
 	}
 	return blk.Size - types.Size(len(key)), true, nil
 }
+
+func (s *Store) IndexStorageSize() (int64, error) {
+	return s.index.StorageSize()
+}
