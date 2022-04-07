@@ -17,7 +17,11 @@ var log = logging.Logger("storethehash/index")
 // gcInterval is how often to run garbage collection.
 const gcInterval = 20 * time.Minute
 
+// garbageCollector is a goroutine that runs periodically to search for and
+// remove stale index files.
 func (i *Index) garbageCollector() {
+	defer close(i.gcDone)
+
 	var gcDone chan struct{}
 	hasUpdate := true
 	t := time.NewTimer(gcInterval)
@@ -63,6 +67,7 @@ func (i *Index) garbageCollector() {
 	}
 }
 
+// gc searches for and removes stale index files.
 func (i *Index) gc(ctx context.Context) error {
 	header, err := readHeader(i.headerPath)
 	if err != nil {
@@ -111,6 +116,10 @@ func (i *Index) gc(ctx context.Context) error {
 	return nil
 }
 
+// gcIndexFile scans a single index file, checking if any of the entries are in
+// buckets that use this file.  If no buckets are using this file for any of
+// the entries, then there are no more active entries and the file can be
+// deleted.
 func (i *Index) gcIndexFile(ctx context.Context, fileNum uint32, indexPath string) (bool, error) {
 	file, err := openFileForScan(indexPath)
 	if err != nil {

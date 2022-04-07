@@ -79,6 +79,7 @@ type Index struct {
 	length            types.Position
 	basePath          string
 	updateSig         chan struct{}
+	gcDone            chan struct{}
 }
 
 const indexBufferSize = 32 * 4096
@@ -139,7 +140,6 @@ func OpenIndex(path string, primary primary.PrimaryStorage, indexSizeBits uint8)
 		if err != nil {
 			return nil, err
 		}
-
 	}
 
 	fi, err := file.Stat()
@@ -163,6 +163,7 @@ func OpenIndex(path string, primary primary.PrimaryStorage, indexSizeBits uint8)
 		length:      types.Position(fi.Size()),
 		basePath:    path,
 		updateSig:   make(chan struct{}, 1),
+		gcDone:      make(chan struct{}),
 	}
 
 	go idx.garbageCollector()
@@ -247,9 +248,7 @@ func scanIndexFile(basePath string, fileNum uint32, indexSizeBits uint8, buckets
 	if err != nil {
 		return err
 	}
-	defer func() {
-		_ = file.Close()
-	}()
+	defer file.Close()
 
 	buffered := bufio.NewReaderSize(file, 32*1024)
 	sizeBuffer := make([]byte, SizePrefixSize)
@@ -302,9 +301,10 @@ func scanIndexFile(basePath string, fileNum uint32, indexSizeBits uint8, buckets
 	return nil
 }
 
-// Put a key together with a file offset into the index.
+// Put puts a key together with a file offset into the index.
 //
-// The key needs to be a cryptographically secure hash and at least 4 bytes long.
+// The key needs to be a cryptographically secure hash that is at least 4 bytes
+// long.
 func (i *Index) Put(key []byte, location types.Block) error {
 	// Get record list and bucket index
 	bucket, err := i.getBucketIndex(key)
@@ -318,15 +318,15 @@ func (i *Index) Put(key []byte, location types.Block) error {
 		return err
 	}
 
-	// The key doesn't need the prefix that was used to find the right bucket. For simplicty
-	// only full bytes are trimmed off.
+	// The key does not need the prefix that was used to find the right
+	// bucket. For simplicity only full bytes are trimmed off.
 	indexKey := StripBucketPrefix(key, i.sizeBits)
 
 	// No records stored in that bucket yet
 	var newData []byte
 	if records == nil {
-		// As it's the first key a single byte is enough as it doesn't need to be distinguised
-		// from other keys.
+		// As it's the first key a single byte is enough as it does not need to
+		// be distinguished from other keys.
 		trimmedIndexKey := indexKey[:1]
 		newData = EncodeKeyPosition(KeyPositionPair{trimmedIndexKey, location})
 	} else {
@@ -425,7 +425,7 @@ func (i *Index) Update(key []byte, location types.Block) error {
 		return err
 	}
 
-	// The key doesn't need the prefix that was used to find the right bucket. For simplicty
+	// The key doesn't need the prefix that was used to find the right bucket. For simplicity
 	// only full bytes are trimmed off.
 	indexKey := StripBucketPrefix(key, i.sizeBits)
 
@@ -433,7 +433,7 @@ func (i *Index) Update(key []byte, location types.Block) error {
 	// If no records stored in that bucket yet it means there is no key
 	// to be updated.
 	if records == nil {
-		return fmt.Errorf("no records found in index. We can't udpate the key")
+		return fmt.Errorf("no records found in index, unable to update key")
 	} else {
 		// Read the record list to find the key and position
 		r := records.GetRecord(indexKey)
@@ -464,7 +464,7 @@ func (i *Index) Remove(key []byte) (bool, error) {
 		return false, err
 	}
 
-	// The key doesn't need the prefix that was used to find the right bucket. For simplicty
+	// The key doesn't need the prefix that was used to find the right bucket. For simplicity
 	// only full bytes are trimmed off.
 	indexKey := StripBucketPrefix(key, i.sizeBits)
 
@@ -675,7 +675,7 @@ func (i *Index) Get(key []byte) (types.Block, bool, error) {
 		return types.Block{}, false, err
 	}
 
-	// Here we just nead an RLock, there won't be changes over buckets.
+	// Here we just need an RLock, there won't be changes over buckets.
 	// This is why we don't use getRecordsFromBuckets to wrap only this
 	// line of code in the lock
 	i.bucketLk.RLock()
@@ -697,7 +697,7 @@ func (i *Index) Get(key []byte) (types.Block, bool, error) {
 		return types.Block{}, false, nil
 	}
 
-	// The key doesn't need the prefix that was used to find the right bucket. For simplicty
+	// The key doesn't need the prefix that was used to find the right bucket. For simplicity
 	// only full bytes are trimmed off.
 	indexKey := StripBucketPrefix(key, i.sizeBits)
 
@@ -724,6 +724,7 @@ func (i *Index) Sync() error {
 
 func (i *Index) Close() error {
 	close(i.updateSig)
+	<-i.gcDone
 	return i.file.Close()
 }
 
