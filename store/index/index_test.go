@@ -53,6 +53,7 @@ func assertCommonPrefixTrimmed(t *testing.T, key1 []byte, key2 []byte, expectedK
 	require.NoError(t, err)
 
 	iter := NewIndexIter(i.basePath, i.fileNum)
+	defer iter.Close()
 
 	// The record list is append only, hence the first record list only contains the first insert
 	data, _, done, err := iter.Next()
@@ -106,6 +107,7 @@ func TestIndexPutSingleKey(t *testing.T) {
 
 	// Skip header
 	iter := NewIndexIter(i.basePath, i.fileNum)
+	defer iter.Close()
 	data, _, done, err := iter.Next()
 	require.NoError(t, err)
 	require.False(t, done)
@@ -215,6 +217,7 @@ func TestIndexPutDistinctKey(t *testing.T) {
 	require.NoError(t, err)
 
 	iter := NewIndexIter(i.basePath, i.fileNum)
+	defer iter.Close()
 
 	// The record list is append only, hence the first record list only contains the first insert
 	var data []byte
@@ -311,6 +314,7 @@ func TestIndexPutPrevAndNextKeyCommonPrefix(t *testing.T) {
 	require.NoError(t, err)
 
 	iter := NewIndexIter(i.basePath, i.fileNum)
+	defer iter.Close()
 
 	var data []byte
 	for {
