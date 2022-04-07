@@ -86,7 +86,10 @@ func chunkOldIndex(file *os.File, name string) (uint32, error) {
 			return 0, err
 		}
 		size := binary.LittleEndian.Uint32(sizeBuffer)
-		writer.Write(sizeBuffer)
+		if _, err = writer.Write(sizeBuffer); err != nil {
+			outFile.Close()
+			return 0, err
+		}
 		n, err := io.CopyN(writer, reader, int64(size))
 		if err != nil {
 			outFile.Close()

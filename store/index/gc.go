@@ -53,12 +53,17 @@ func (i *Index) garbageCollector() {
 			gcDone = make(chan struct{})
 			go func() {
 				defer close(gcDone)
-				start := time.Now()
-				if err := i.gc(ctx); err != nil {
+				log.Infow("GC started")
+				fileCount, err := i.gc(ctx)
+				if err != nil {
 					log.Errorw("GC failed", "err", err)
 					return
 				}
-				log.Debugw("GC time", "elapsed", time.Since(start))
+				if fileCount == 0 {
+					log.Info("GC finished, no index files to remove")
+				} else {
+					log.Infow("GC finished, removed index files", "count", fileCount)
+				}
 			}()
 		case <-gcDone:
 			gcDone = nil
@@ -69,15 +74,15 @@ func (i *Index) garbageCollector() {
 	}
 }
 
-// gc searches for and removes stale index files.
-func (i *Index) gc(ctx context.Context) error {
+// gc searches for and removes stale index files. Returns the number of files removed.
+func (i *Index) gc(ctx context.Context) (int, error) {
 	header, err := readHeader(i.headerPath)
 	if err != nil {
-		return err
+		return 0, err
 	}
 	fileNum := header.FirstFile
 
-	var count, bytesFreed int64
+	var count int
 	for {
 		if fileNum == i.fileNum {
 			// Do not try to GC the current index file.
@@ -86,7 +91,7 @@ func (i *Index) gc(ctx context.Context) error {
 		indexPath := indexFileName(i.basePath, fileNum)
 		stale, err := i.gcIndexFile(ctx, fileNum, indexPath)
 		if err != nil {
-			return err
+			return 0, err
 		}
 		if !stale {
 			break
@@ -95,27 +100,17 @@ func (i *Index) gc(ctx context.Context) error {
 		header.FirstFile = fileNum
 		err = writeHeader(i.headerPath, header)
 		if err != nil {
-			return err
-		}
-		fi, err := os.Stat(indexPath)
-		if err == nil {
-			bytesFreed += fi.Size()
+			return 0, err
 		}
 		// If updating index info ok, then remove stale index file.
 		err = os.Remove(indexPath)
 		if err != nil {
-			return err
+			return 0, err
 		}
 		count++
 	}
 
-	if count == 0 {
-		log.Info("No index files to GC")
-	} else {
-		log.Infow("GC removed index files", "count", count, "bytes", bytesFreed)
-	}
-
-	return nil
+	return count, nil
 }
 
 // gcIndexFile scans a single index file, checking if any of the entries are in
