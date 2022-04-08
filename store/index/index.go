@@ -897,10 +897,6 @@ func openFileAppend(name string) (*os.File, error) {
 	return os.OpenFile(name, os.O_WRONLY|os.O_APPEND|os.O_CREATE, 0644)
 }
 
-func openNewFileAppend(name string) (*os.File, error) {
-	return os.OpenFile(name, os.O_WRONLY|os.O_APPEND|os.O_CREATE|os.O_EXCL, 0644)
-}
-
 func openFileForScan(name string) (*os.File, error) {
 	return os.OpenFile(name, os.O_RDONLY, 0644)
 }

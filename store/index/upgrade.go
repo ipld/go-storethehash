@@ -68,7 +68,7 @@ func readOldHeader(file *os.File) (byte, byte, types.Position, error) {
 func chunkOldIndex(file *os.File, name string, fileSizeLimit int64) (uint32, error) {
 	var fileNum uint32
 	outName := indexFileName(name, fileNum)
-	outFile, err := openNewFileAppend(outName)
+	outFile, err := createFileAppend(outName)
 	if err != nil {
 		return 0, err
 	}
@@ -109,7 +109,7 @@ func chunkOldIndex(file *os.File, name string, fileSizeLimit int64) (uint32, err
 			log.Infof("Upgrade created index file %s", outName)
 			fileNum++
 			outName = indexFileName(name, fileNum)
-			outFile, err = openNewFileAppend(outName)
+			outFile, err = createFileAppend(outName)
 			if err != nil {
 				if os.IsNotExist(err) {
 					break
@@ -129,4 +129,8 @@ func chunkOldIndex(file *os.File, name string, fileSizeLimit int64) (uint32, err
 	}
 	outFile.Close()
 	return fileNum, nil
+}
+
+func createFileAppend(name string) (*os.File, error) {
+	return os.OpenFile(name, os.O_WRONLY|os.O_APPEND|os.O_CREATE|os.O_TRUNC, 0644)
 }
