@@ -18,6 +18,7 @@ import (
 const defaultIndexSizeBits = uint8(24)
 const defaultBurstRate = 4 * 1024 * 1024
 const defaultSyncInterval = time.Second
+const defaultGCInterval = 0 //30 * time.Minute
 
 func initStore(t *testing.T, dir string) (*store.Store, error) {
 	indexPath := filepath.Join(dir, "storethehash.index")
@@ -26,7 +27,7 @@ func initStore(t *testing.T, dir string) (*store.Store, error) {
 	if err != nil {
 		return nil, err
 	}
-	store, err := store.OpenStore(indexPath, primary, defaultIndexSizeBits, defaultSyncInterval, defaultBurstRate)
+	store, err := store.OpenStore(indexPath, primary, defaultIndexSizeBits, defaultSyncInterval, defaultBurstRate, defaultGCInterval)
 	if err != nil {
 		_ = primary.Close()
 		return nil, err

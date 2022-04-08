@@ -42,7 +42,7 @@ func (b Buckets) Get(index BucketIndex) (types.Position, error) {
 // 2 ^ bits.
 type SizeBuckets []types.Size
 
-// NewBuckets returns a list of buckets for the given index size in bits
+// NewSizeBuckets returns a list of buckets for the given index size in bits
 func NewSizeBuckets(indexSizeBits uint8) (SizeBuckets, error) {
 	if indexSizeBits > 32 {
 		return nil, types.ErrIndexTooLarge

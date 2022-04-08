@@ -23,3 +23,9 @@ type ErrIndexWrongBitSize [2]byte
 func (e ErrIndexWrongBitSize) Error() string {
 	return fmt.Sprintf("Index bit size for buckets is %d, expected %d", e[0], e[1])
 }
+
+type ErrIndexWrongFileSize [2]uint32
+
+func (e ErrIndexWrongFileSize) Error() string {
+	return fmt.Sprintf("Index file size limit is %d, expected %d", e[0], e[1])
+}
