@@ -42,21 +42,21 @@ The format of that append only log is:
 // With a 1GiB local offset taking the first 30 bits of a 64 bit number, that
 // leaves 34 bits left to encode the file number.  Instead of having logic to
 // wrap the file number at the largest value allowed by the available bits, the
-// file number is represented as a 32-bit value that always wraps at 4GiB.
+// file number is represented as a 32-bit value that always wraps at 2^32.
 //
-// A 32-bit file number means there should never be 4GiB of active index files.
-// This also means that indexFileSizeLimit should never be greater than 4GiB.
-// Using a 1GiB indexFileSizeLimit and a 4GiB file number limit, results in 2
-// bits unused in the bucketPos address space.  With a smaller file size more
-// bits would be unused.
+// Since the file number wraps 2^32 this means there can never be more than
+// 2^32 active index files.  This also means that maxFileSize should never be
+// greater than 2^32.  Using a maxFileSize of 2^30, the default, and a 32-bit
+// file number, results in 2 bits unused in the bucketPos address space.  With
+// a smaller maxFileSize more bits would be unused.
 //
-// Smaller values for indexFileSizeLimit result in more files needed to hold
+// Smaller values for maxFileSize result in more files needed to hold
 // the index, but also more granular GC.  A value too small risks running out
 // of inodes on the file system, and a value too large means that there is more
 // stale data that GC cannot remove.  Using a 1GiB index file size limit offers
 // a good balance, and this value should not be changed (other than for
 // testing) by more than a factor of 4.
-const indexFileSizeLimit = 1024 * 1024 * 1024
+const maxFileSize = 1024 * 1024 * 1024
 
 // IndexVersion is stored in the header data to indicate how to interpred index data.
 const IndexVersion = 3
@@ -80,6 +80,9 @@ type Header struct {
 	Version int
 	// The number of bits used to determine the in-memory buckets
 	BucketsBits byte
+	// MaxFileSize is the size limit of each index file. This cannot be greater
+	// than 4GiB.
+	MaxFileSize uint32
 	// First index file number
 	FirstFile uint32
 }
@@ -88,6 +91,7 @@ func newHeader(bucketsBits byte) Header {
 	return Header{
 		Version:     IndexVersion,
 		BucketsBits: bucketsBits,
+		MaxFileSize: maxFileSize,
 	}
 }
 
@@ -150,6 +154,10 @@ func OpenIndex(path string, primary primary.PrimaryStorage, indexSizeBits uint8,
 
 		if header.BucketsBits != indexSizeBits {
 			return nil, types.ErrIndexWrongBitSize{header.BucketsBits, indexSizeBits}
+		}
+
+		if header.MaxFileSize != maxFileSize {
+			return nil, types.ErrIndexWrongFileSize{header.MaxFileSize, maxFileSize}
 		}
 
 		lastIndexNum, err = scanIndex(path, header.FirstFile, buckets, sizeBuckets)
@@ -536,15 +544,15 @@ func (i *Index) getRecordsFromBucket(bucket BucketIndex) (RecordList, error) {
 }
 
 func (i *Index) flushBucket(bucket BucketIndex, newData []byte) (types.Block, types.Work, error) {
-	if i.length >= indexFileSizeLimit {
+	if i.length >= maxFileSize {
 		fileNum := i.fileNum + 1
 		indexPath := indexFileName(i.basePath, fileNum)
 		// If the index file being opened already exists then fileNum has
 		// wrapped and there are 4GiB of index files.  This means that
-		// indexFileSizeLimit is set far too small or GC is disabled.
+		// maxFileSize is set far too small or GC is disabled.
 		if _, err := os.Stat(indexPath); !os.IsNotExist(err) {
 			log.Warnw("Creating index file overwrites existing. Check that file size limit is not too small resulting in too many files.",
-				"indexFileSizeLimit", indexFileSizeLimit, "indexPath", indexPath)
+				"maxFileSize", maxFileSize, "indexPath", indexPath)
 		}
 		file, err := openFileAppend(indexPath)
 		if err != nil {
@@ -894,9 +902,9 @@ func bucketPosToFileNum(pos types.Position) (bool, uint32) {
 	}
 	// The start of the entry, not the position of the record, determines which
 	// is file is used.  The record begins SizePrefixSize before pos.  This
-	// matters only if pos is slightly after a indexFileSizeLimit boundry, but
+	// matters only if pos is slightly after a maxFileSize boundry, but
 	// the adjusted position is not.
-	return true, uint32((pos - SizePrefixSize) / indexFileSizeLimit)
+	return true, uint32((pos - SizePrefixSize) / maxFileSize)
 }
 
 func localPosToBucketPos(pos int64, fileNum uint32) types.Position {
@@ -906,7 +914,7 @@ func localPosToBucketPos(pos int64, fileNum uint32) types.Position {
 	}
 	// fileNum is a 32bit value and will wrap at 4GiB, So 4294967296 is the
 	// maximum number of index files possible.
-	return types.Position(fileNum)*indexFileSizeLimit + types.Position(pos)
+	return types.Position(fileNum)*maxFileSize + types.Position(pos)
 }
 
 // localizeBucketPos decodes a bucketPos into a local pos and file number.
@@ -917,6 +925,6 @@ func localizeBucketPos(pos types.Position) (types.Position, uint32) {
 		return 0, 0
 	}
 	// Subtract file offset to get pos within its local file.
-	localPos := pos - (types.Position(fileNum) * indexFileSizeLimit)
+	localPos := pos - (types.Position(fileNum) * maxFileSize)
 	return localPos, fileNum
 }

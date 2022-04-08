@@ -28,7 +28,7 @@ func upgradeIndex(name, headerPath string) error {
 		return fmt.Errorf("cannot convert unknown header version: %d", version)
 	}
 
-	fileNum, err := chunkOldIndex(inFile, name, indexFileSizeLimit)
+	fileNum, err := chunkOldIndex(inFile, name, maxFileSize)
 	if err != nil {
 		return err
 	}
