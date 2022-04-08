@@ -28,7 +28,7 @@ func upgradeIndex(name, headerPath string) error {
 		return fmt.Errorf("cannot convert unknown header version: %d", version)
 	}
 
-	fileNum, err := chunkOldIndex(inFile, name)
+	fileNum, err := chunkOldIndex(inFile, name, indexFileSizeLimit)
 	if err != nil {
 		return err
 	}
@@ -65,7 +65,7 @@ func readOldHeader(file *os.File) (byte, byte, types.Position, error) {
 	return version, bucketBits, types.Position(SizePrefixSize + headerSize), nil
 }
 
-func chunkOldIndex(file *os.File, name string) (uint32, error) {
+func chunkOldIndex(file *os.File, name string, fileSizeLimit int64) (uint32, error) {
 	var fileNum uint32
 	outName := indexFileName(name, fileNum)
 	outFile, err := openNewFileAppend(outName)
@@ -101,7 +101,7 @@ func chunkOldIndex(file *os.File, name string) (uint32, error) {
 			return 0, fmt.Errorf("count not read complete entry from index")
 		}
 		written += SizePrefixSize + int64(size)
-		if written > indexFileSizeLimit {
+		if written > fileSizeLimit {
 			if err = writer.Flush(); err != nil {
 				return 0, err
 			}

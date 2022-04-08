@@ -59,7 +59,7 @@ The format of that append only log is:
 const indexFileSizeLimit = 1024 * 1024 * 1024
 
 // IndexVersion is stored in the header data to indicate how to interpred index data.
-const IndexVersion uint8 = 3
+const IndexVersion = 3
 
 // Number of bytes used for the size prefix of a record list.
 const SizePrefixSize = 4
@@ -73,16 +73,11 @@ func StripBucketPrefix(key []byte, bits byte) []byte {
 	return key[(bits / 8):]
 }
 
-// The header of the index
-//
-// The serialized header is:
-// ```text
-//     |         1 byte        |              1 byte             |              4 bytes             |
-//     | Version of the header | Number of bits used for buckets | First index file number          |
-// ```
+// Header contains information about the index.  This is actually stored in a
+// separate ".info" file, but is the first file read when the index is opened.
 type Header struct {
 	// A version number in case we change the header
-	Version byte
+	Version int
 	// The number of bits used to determine the in-memory buckets
 	BucketsBits byte
 	// First index file number
@@ -913,7 +908,8 @@ func localPosToBucketPos(pos int64, fileNum uint32) types.Position {
 	if pos == 0 {
 		panic("invalid local offset")
 	}
-	// fileNum is a 32bit value and will wrap at 4GiB (4294967296).  So that is the maximum number of index files possible.
+	// fileNum is a 32bit value and will wrap at 4GiB, So 4294967296 is the
+	// maximum number of index files possible.
 	return types.Position(fileNum)*indexFileSizeLimit + types.Position(pos)
 }
 
