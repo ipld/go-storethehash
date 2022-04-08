@@ -288,8 +288,9 @@ func scanIndexFile(basePath string, fileNum uint32, buckets Buckets, sizeBuckets
 		_, err = io.ReadFull(buffered, data)
 		if err != nil {
 			if err == io.EOF {
-				// The file is corrupt. Though it's not a problem, just take
-				// the data we are able to use and move on.
+				log.Errorw("Unexpected EOF scanning index", "file", indexPath)
+				// The file is corrupt since the expected data could not be
+				// read. Take the usable data and move on.
 				if _, err = file.Seek(0, 2); err != nil {
 					return err
 				}
