@@ -8,7 +8,9 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"sync"
+	"time"
 
 	"github.com/ipld/go-storethehash/store/primary"
 	"github.com/ipld/go-storethehash/store/types"
@@ -121,9 +123,9 @@ const BucketPoolSize = 1024
 // Open and index.
 //
 // It is created if there is no existing index at that path.
-func OpenIndex(path string, primary primary.PrimaryStorage, indexSizeBits uint8) (*Index, error) {
+func OpenIndex(path string, primary primary.PrimaryStorage, indexSizeBits uint8, gcInterval time.Duration) (*Index, error) {
 	var file *os.File
-	headerPath := path + ".info"
+	headerPath := filepath.Clean(path) + ".info"
 
 	buckets, err := NewBuckets(indexSizeBits)
 	if err != nil {
@@ -189,7 +191,11 @@ func OpenIndex(path string, primary primary.PrimaryStorage, indexSizeBits uint8)
 		gcDone:      make(chan struct{}),
 	}
 
-	go idx.garbageCollector()
+	if gcInterval == 0 {
+		log.Warn("Index garbage collection disabled")
+	} else {
+		go idx.garbageCollector(gcInterval)
+	}
 
 	return idx, nil
 }

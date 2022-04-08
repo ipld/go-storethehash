@@ -29,11 +29,13 @@ type HashedBlockstore struct {
 const defaultIndexSizeBits = uint8(24)
 const defaultBurstRate = 4 * 1024 * 1024
 const defaultSyncInterval = time.Second
+const defaultGCInterval = 30 * time.Minute
 
 type configOptions struct {
 	indexSizeBits uint8
 	syncInterval  time.Duration
 	burstRate     types.Work
+	gcInterval    time.Duration
 }
 
 type Option func(*configOptions)
@@ -56,12 +58,19 @@ func BurstRate(burstRate uint64) Option {
 	}
 }
 
+func GCInterval(gcInterval time.Duration) Option {
+	return func(co *configOptions) {
+		co.gcInterval = gcInterval
+	}
+}
+
 // OpenHashedBlockstore opens a HashedBlockstore with the default index size
 func OpenHashedBlockstore(indexPath string, dataPath string, options ...Option) (*HashedBlockstore, error) {
 	co := configOptions{
 		indexSizeBits: defaultIndexSizeBits,
 		syncInterval:  defaultSyncInterval,
 		burstRate:     defaultBurstRate,
+		gcInterval:    defaultGCInterval,
 	}
 	for _, option := range options {
 		option(&co)
@@ -70,7 +79,7 @@ func OpenHashedBlockstore(indexPath string, dataPath string, options ...Option) 
 	if err != nil {
 		return nil, err
 	}
-	store, err := store.OpenStore(indexPath, primary, co.indexSizeBits, co.syncInterval, co.burstRate)
+	store, err := store.OpenStore(indexPath, primary, co.indexSizeBits, co.syncInterval, co.burstRate, co.gcInterval)
 	if err != nil {
 		return nil, err
 	}

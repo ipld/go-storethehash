@@ -34,8 +34,8 @@ type Store struct {
 	syncInterval time.Duration
 }
 
-func OpenStore(path string, primary primary.PrimaryStorage, indexSizeBits uint8, syncInterval time.Duration, burstRate types.Work) (*Store, error) {
-	index, err := index.OpenIndex(path, primary, indexSizeBits)
+func OpenStore(path string, primary primary.PrimaryStorage, indexSizeBits uint8, syncInterval time.Duration, burstRate types.Work, gcInterval time.Duration) (*Store, error) {
+	index, err := index.OpenIndex(path, primary, indexSizeBits, gcInterval)
 	if err != nil {
 		return nil, err
 	}
@@ -460,6 +460,8 @@ func (s *Store) GetSize(key []byte) (types.Size, bool, error) {
 	return blk.Size - types.Size(len(key)), true, nil
 }
 
+// IndexStorageSize returns the storage used by the index files.  This includs
+// the `.info` file and the `.free` file and does not include primary storage.
 func (s *Store) IndexStorageSize() (int64, error) {
 	return s.index.StorageSize()
 }
