@@ -193,6 +193,7 @@ func OpenIndex(path string, primary primary.PrimaryStorage, indexSizeBits uint8,
 
 	if gcInterval == 0 {
 		log.Warn("Index garbage collection disabled")
+		close(idx.gcDone)
 	} else {
 		go idx.garbageCollector(gcInterval)
 	}
