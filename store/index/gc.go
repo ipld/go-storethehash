@@ -25,7 +25,7 @@ func (i *Index) garbageCollector() {
 	var gcDone chan struct{}
 	hasUpdate := true
 
-	// Run 1st GC 1 minute adter startup.
+	// Run 1st GC 1 minute after startup.
 	t := time.NewTimer(time.Minute)
 
 	ctx, cancel := context.WithCancel(context.Background())

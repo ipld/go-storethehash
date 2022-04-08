@@ -25,7 +25,7 @@ func upgradeIndex(name, headerPath string) error {
 		return err
 	}
 	if version != 2 {
-		return fmt.Errorf("cannot convert unknown header version")
+		return fmt.Errorf("cannot convert unknown header version: %d", version)
 	}
 
 	fileNum, err := chunkOldIndex(inFile, name)
@@ -126,8 +126,8 @@ func chunkOldIndex(file *os.File, name string) (uint32, error) {
 		if err = writer.Flush(); err != nil {
 			return 0, err
 		}
-		outFile.Close()
 		fmt.Println("Created index file", outName)
 	}
+	outFile.Close()
 	return fileNum, nil
 }

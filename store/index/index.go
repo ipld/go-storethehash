@@ -122,8 +122,6 @@ const BucketPoolSize = 1024
 //
 // It is created if there is no existing index at that path.
 func OpenIndex(path string, primary primary.PrimaryStorage, indexSizeBits uint8) (*Index, error) {
-	var lastIndexNum uint32
-	var lastIndexPath string
 	var file *os.File
 	headerPath := path + ".info"
 
@@ -141,15 +139,11 @@ func OpenIndex(path string, primary primary.PrimaryStorage, indexSizeBits uint8)
 		return nil, err
 	}
 
+	var lastIndexNum uint32
 	header, err := readHeader(headerPath)
 	if os.IsNotExist(err) {
 		header = newHeader(indexSizeBits)
 		if err = writeHeader(headerPath, header); err != nil {
-			return nil, err
-		}
-		lastIndexPath = indexFileName(path, 0)
-		file, err = openNewFileAppend(lastIndexPath)
-		if err != nil {
 			return nil, err
 		}
 	} else {
@@ -161,16 +155,15 @@ func OpenIndex(path string, primary primary.PrimaryStorage, indexSizeBits uint8)
 			return nil, types.ErrIndexWrongBitSize{header.BucketsBits, indexSizeBits}
 		}
 
-		lastIndexNum, err = scanIndex(path, header.FirstFile, indexSizeBits, buckets, sizeBuckets)
+		lastIndexNum, err = scanIndex(path, header.FirstFile, buckets, sizeBuckets)
 		if err != nil {
 			return nil, err
 		}
+	}
 
-		lastIndexPath = indexFileName(path, lastIndexNum)
-		file, err = openFileAppend(lastIndexPath)
-		if err != nil {
-			return nil, err
-		}
+	file, err = openFileAppend(indexFileName(path, lastIndexNum))
+	if err != nil {
+		return nil, err
 	}
 
 	fi, err := file.Stat()
@@ -205,17 +198,10 @@ func indexFileName(basePath string, fileNum uint32) string {
 	return fmt.Sprintf("%s.%d", basePath, fileNum)
 }
 
-func scanIndex(basePath string, fileNum uint32, indexSizeBits uint8, buckets Buckets, sizeBuckets SizeBuckets) (uint32, error) {
-	if len(buckets) != 1<<indexSizeBits {
-		panic("wrong size of buckets")
-	}
-	if len(sizeBuckets) != 1<<indexSizeBits {
-		panic("wrong size of sizeBuckets")
-	}
-
+func scanIndex(basePath string, fileNum uint32, buckets Buckets, sizeBuckets SizeBuckets) (uint32, error) {
 	var lastFileNum uint32
 	for {
-		err := scanIndexFile(basePath, fileNum, indexSizeBits, buckets, sizeBuckets)
+		err := scanIndexFile(basePath, fileNum, buckets, sizeBuckets)
 		if err != nil {
 			if os.IsNotExist(err) {
 				break
@@ -267,7 +253,7 @@ func (i *Index) StorageSize() (int64, error) {
 	return size, nil
 }
 
-func scanIndexFile(basePath string, fileNum uint32, indexSizeBits uint8, buckets Buckets, sizeBuckets SizeBuckets) error {
+func scanIndexFile(basePath string, fileNum uint32, buckets Buckets, sizeBuckets SizeBuckets) error {
 	indexPath := indexFileName(basePath, fileNum)
 
 	// This is a single sequential read across the index file.
@@ -543,7 +529,7 @@ func (i *Index) getRecordsFromBucket(bucket BucketIndex) (RecordList, error) {
 	if cached != nil {
 		records = NewRecordListRaw(cached)
 	} else {
-		records, err = i.readDiskBuckets(bucket, indexOffset, recordListSize, fileNum)
+		records, err = i.readDiskBucket(indexOffset, recordListSize, fileNum)
 		if err != nil {
 			return nil, err
 		}
@@ -566,11 +552,13 @@ func (i *Index) flushBucket(bucket BucketIndex, newData []byte) (types.Block, ty
 		if err != nil {
 			return types.Block{}, 0, err
 		}
-		i.fileNum = fileNum
-		i.writer.Flush()
+		if err = i.writer.Flush(); err != nil {
+			return types.Block{}, 0, err
+		}
 		i.file.Close()
 		i.writer.Reset(file)
 		i.file = file
+		i.fileNum = fileNum
 		i.length = 0
 	}
 
@@ -670,7 +658,7 @@ func (i *Index) readBucketInfo(bucket BucketIndex) ([]byte, types.Position, type
 	return nil, localPos, recordListSize, fileNum, nil
 }
 
-func (i *Index) readDiskBuckets(bucket BucketIndex, indexOffset types.Position, recordListSize types.Size, fileNum uint32) (RecordList, error) {
+func (i *Index) readDiskBucket(indexOffset types.Position, recordListSize types.Size, fileNum uint32) (RecordList, error) {
 	// indexOffset should never be 0 is there is a bucket, because it is always
 	// SizePrefixSize into the stored data.
 	if indexOffset == 0 {
@@ -713,7 +701,7 @@ func (i *Index) Get(key []byte) (types.Block, bool, error) {
 	if cached != nil {
 		records = NewRecordListRaw(cached)
 	} else {
-		records, err = i.readDiskBuckets(bucket, indexOffset, recordListSize, fileNum)
+		records, err = i.readDiskBucket(indexOffset, recordListSize, fileNum)
 		if err != nil {
 			return types.Block{}, false, err
 		}
