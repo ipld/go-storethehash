@@ -216,7 +216,7 @@ func scanIndex(basePath string, fileNum uint32, buckets Buckets, sizeBuckets Siz
 			if os.IsNotExist(err) {
 				break
 			}
-			return 0, err
+			return 0, fmt.Errorf("error scanning index file %q: %w", indexFileName(basePath, fileNum), err)
 		}
 		lastFileNum = fileNum
 		fileNum++
@@ -283,6 +283,13 @@ func scanIndexFile(basePath string, fileNum uint32, buckets Buckets, sizeBuckets
 			if err == io.EOF {
 				break
 			}
+			if err == io.ErrUnexpectedEOF {
+				log.Errorw("Unexpected EOF scanning index", "file", indexPath)
+				file.Close()
+				// Cut off incomplete data
+				os.Truncate(indexPath, iterPos)
+				break
+			}
 			return err
 		}
 		size := binary.LittleEndian.Uint32(sizeBuffer)
@@ -295,10 +302,13 @@ func scanIndexFile(basePath string, fileNum uint32, buckets Buckets, sizeBuckets
 		data := scratch[:size]
 		_, err = io.ReadFull(buffered, data)
 		if err != nil {
-			if err == io.EOF {
+			if err == io.ErrUnexpectedEOF || err == io.EOF {
 				// The file is corrupt since the expected data could not be
 				// read. Take the usable data and move on.
-				log.Errorw("Unexpected EOF scanning index", "file", indexPath)
+				log.Errorw("Unexpected EOF scanning index record", "file", indexPath)
+				file.Close()
+				// Cut off incomplete data
+				os.Truncate(indexPath, pos-SizePrefixSize)
 				break
 			}
 			return err
