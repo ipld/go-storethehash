@@ -106,9 +106,7 @@ func chunkOldIndex(file *os.File, name string, fileSizeLimit int64) (uint32, err
 				return 0, err
 			}
 			outFile.Close()
-			// Write this to stdout so that a human user knows that the indexer
-			// is busy upgrading, without including this with in log output.
-			fmt.Println("Created index file", outName)
+			log.Infof("Upgrade created index file %s", outName)
 			fileNum++
 			outName = indexFileName(name, fileNum)
 			outFile, err = openNewFileAppend(outName)
@@ -126,7 +124,8 @@ func chunkOldIndex(file *os.File, name string, fileSizeLimit int64) (uint32, err
 		if err = writer.Flush(); err != nil {
 			return 0, err
 		}
-		fmt.Println("Created index file", outName)
+		log.Infof("Upgrade created index file %s", outName)
+
 	}
 	outFile.Close()
 	return fileNum, nil

@@ -306,9 +306,7 @@ func scanIndexFile(basePath string, fileNum uint32, buckets Buckets, sizeBuckets
 			return err
 		}
 	}
-	// Write this to stdout so that a human user knows that the indexer is busy
-	// starting up, without including this with in log output.
-	fmt.Println("Scanned", indexPath)
+	log.Infof("Scanned %s", indexPath)
 	return nil
 }
 

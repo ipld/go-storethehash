@@ -69,7 +69,6 @@ func TestChunkOldIndex(t *testing.T) {
 	newSizeBuckets, err := NewSizeBuckets(bucketBits)
 	require.NoError(t, err)
 
-	fmt.Println()
 	var fileNum, lastFileNum uint32
 	var prevSize int64
 	for {
