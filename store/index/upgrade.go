@@ -72,8 +72,8 @@ func chunkOldIndex(file *os.File, name string, fileSizeLimit int64) (uint32, err
 	if err != nil {
 		return 0, err
 	}
-	writer := bufio.NewWriter(outFile)
-	reader := bufio.NewReaderSize(file, 32*1024)
+	writer := bufio.NewWriterSize(outFile, indexBufferSize)
+	reader := bufio.NewReaderSize(file, indexBufferSize)
 
 	sizeBuffer := make([]byte, SizePrefixSize)
 	var written int64
@@ -101,7 +101,7 @@ func chunkOldIndex(file *os.File, name string, fileSizeLimit int64) (uint32, err
 			return 0, fmt.Errorf("count not read complete entry from index")
 		}
 		written += SizePrefixSize + int64(size)
-		if written > fileSizeLimit {
+		if written >= fileSizeLimit {
 			if err = writer.Flush(); err != nil {
 				return 0, err
 			}

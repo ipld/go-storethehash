@@ -126,16 +126,16 @@ func OpenIndex(path string, primary primary.PrimaryStorage, indexSizeBits uint8,
 	var file *os.File
 	headerPath := filepath.Clean(path) + ".info"
 
+	err := upgradeIndex(path, headerPath)
+	if err != nil {
+		return nil, err
+	}
+
 	buckets, err := NewBuckets(indexSizeBits)
 	if err != nil {
 		return nil, err
 	}
 	sizeBuckets, err := NewSizeBuckets(indexSizeBits)
-	if err != nil {
-		return nil, err
-	}
-
-	err = upgradeIndex(path, headerPath)
 	if err != nil {
 		return nil, err
 	}
@@ -273,7 +273,7 @@ func scanIndexFile(basePath string, fileNum uint32, buckets Buckets, sizeBuckets
 	}
 	defer file.Close()
 
-	buffered := bufio.NewReaderSize(file, 32*1024)
+	buffered := bufio.NewReaderSize(file, indexBufferSize)
 	sizeBuffer := make([]byte, SizePrefixSize)
 	scratch := make([]byte, 256)
 	var iterPos int64
@@ -705,7 +705,7 @@ func (i *Index) Get(key []byte) (types.Block, bool, error) {
 	}
 
 	// Here we just need an RLock, there won't be changes over buckets.
-	// This is why we don't use getRecordsFromBuckets to wrap only this
+	// This is why we don't use getRecordsFromBucket to wrap only this
 	// line of code in the lock
 	i.bucketLk.RLock()
 	cached, indexOffset, recordListSize, fileNum, err := i.readBucketInfo(bucket)
