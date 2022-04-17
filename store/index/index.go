@@ -378,7 +378,10 @@ func (i *Index) Put(key []byte, location types.Block) error {
 				return nil
 			}
 
-			trimmedPrevKey := prevKey[:keyTrimPos+1]
+			trimmedPrevKey := prevKey
+			if keyTrimPos < len(prevKey) {
+				trimmedPrevKey = prevKey[:keyTrimPos+1]
+			}
 			trimmedIndexKey := indexKey[:keyTrimPos+1]
 			var keys []KeyPositionPair
 
