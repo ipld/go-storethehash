@@ -381,6 +381,14 @@ func (i *Index) Put(key []byte, location types.Block) error {
 			trimmedPrevKey := prevKey
 			if keyTrimPos < len(prevKey) {
 				trimmedPrevKey = prevKey[:keyTrimPos+1]
+			} else {
+				// trimmedPrevKey should always be a prefix. since it isn't here, collect some diagnostic logs.
+				cached, indexOffset, recordListSize, fileNum, err := i.readBucketInfo(bucket)
+				if err != nil {
+					log.Errorw("Cannot read bucket", "err", err)
+				} else {
+					log.Errorw("Read bad pevious key data", "cached", cached, "pos", indexOffset, "size", recordListSize, "file", indexFileName(i.basePath, fileNum))
+				}
 			}
 			trimmedIndexKey := indexKey[:keyTrimPos+1]
 			var keys []KeyPositionPair
