@@ -3,6 +3,7 @@ package freelist
 import (
 	"bufio"
 	"encoding/binary"
+	"fmt"
 	"os"
 	"sync"
 
@@ -89,6 +90,11 @@ func (cp *FreeList) commit() (types.Work, error) {
 		}
 		work += blockWork
 	}
+	err := cp.writer.Flush()
+	if err != nil {
+		return 0, fmt.Errorf("cannot flush data to freelist file %s: %w", cp.file.Name(), err)
+	}
+
 	return work, nil
 }
 

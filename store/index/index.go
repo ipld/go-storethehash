@@ -389,8 +389,14 @@ func (i *Index) Put(key []byte, location types.Block) error {
 				// The previous key, read from the primary, was bad. This means
 				// that the data in the primary at prevRecord.Bucket is not
 				// good, or that data in the index is bad and prevRecord.Bucket
-				// has a wrong location in the primary.
-				log.Errorw("Read bad previous key from primary, too short")
+				// has a wrong location in the primary.  Log the error with
+				// diagnostic information.
+				cached, indexOffset, recordListSize, fileNum, err := i.readBucketInfo(bucket)
+				if err != nil {
+					log.Errorw("Cannot read bucket", "err", err)
+				} else {
+					log.Errorw("Read bad pevious key data, too short", "cached", cached, "pos", indexOffset, "size", recordListSize, "file", indexFileName(i.basePath, fileNum))
+				}
 				// Either way, the previous key record is not usable, so
 				// overwrite it with a record for the new key.  Use the same
 				// key in the index record as the previous record, since the
