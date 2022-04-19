@@ -204,14 +204,13 @@ func OpenIndex(path string, primary primary.PrimaryStorage, indexSizeBits uint8,
 		nextPool:    make(bucketPool, bucketPoolSize),
 		length:      types.Position(fi.Size()),
 		basePath:    path,
-		updateSig:   make(chan struct{}, 1),
-		gcDone:      make(chan struct{}),
 	}
 
 	if gcInterval == 0 {
 		log.Warn("Index garbage collection disabled")
-		close(idx.gcDone)
 	} else {
+		idx.updateSig = make(chan struct{}, 1)
+		idx.gcDone = make(chan struct{})
 		go idx.garbageCollector(gcInterval)
 	}
 
@@ -709,10 +708,13 @@ func (i *Index) commit() (types.Work, error) {
 			return 0, fmt.Errorf("error commiting size bucket: %w", err)
 		}
 	}
-	// Send signal to update index checkpoint.
-	select {
-	case i.updateSig <- struct{}{}:
-	default:
+
+	if i.updateSig != nil {
+		// Send signal to tell GC there are updates.
+		select {
+		case i.updateSig <- struct{}{}:
+		default:
+		}
 	}
 
 	return work, nil
@@ -817,9 +819,11 @@ func (i *Index) Sync() error {
 }
 
 func (i *Index) Close() error {
-	close(i.updateSig)
-	<-i.gcDone
-	i.updateSig = nil
+	if i.updateSig != nil {
+		close(i.updateSig)
+		<-i.gcDone
+		i.updateSig = nil
+	}
 	_, err := i.Flush()
 	if err != nil {
 		i.file.Close()
