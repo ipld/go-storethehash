@@ -492,7 +492,6 @@ func TestIndexGetBad(t *testing.T) {
 	tempDir := t.TempDir()
 	indexPath := filepath.Join(tempDir, "storethehash.index")
 	i, err := OpenIndex(indexPath, primaryStorage, bucketBits, 0)
-	defer i.Close()
 
 	require.NoError(t, err)
 	err = i.Put(key1, types.Block{Offset: 0, Size: 1})
@@ -531,4 +530,7 @@ func TestIndexGetBad(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, found)
 	require.Equal(t, secondKeyBlock, fourthKeyBlock)
+
+	err = i.Close()
+	require.NoError(t, err)
 }
