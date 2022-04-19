@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"encoding/binary"
+	"fmt"
 	"io"
 	"os"
 	"sync"
@@ -25,8 +26,13 @@ type MultihashPrimary struct {
 	poolLk            sync.RWMutex
 }
 
-const blockBufferSize = 32 * 4096
-const blockPoolSize = 1024
+const (
+	// blockBufferSize is the size of primary I/O buffers. If has the same size
+	// as the linux pipe size.
+	blockBufferSize = 16 * 4096
+	// blockPoolSize is the size of the primary cache.
+	blockPoolSize = 1024
+)
 
 type blockRecord struct {
 	key   []byte
@@ -76,7 +82,7 @@ func (cp *MultihashPrimary) getCached(blk types.Block) ([]byte, []byte, error) {
 		return br.key, br.value, nil
 	}
 	if blk.Offset >= cp.length {
-		return nil, nil, types.ErrOutOfBounds
+		return nil, nil, fmt.Errorf("error getting cached multihashed primary: %w", types.ErrOutOfBounds)
 	}
 	return nil, nil, nil
 }
@@ -182,6 +188,11 @@ func (cp *MultihashPrimary) commit() (types.Work, error) {
 		}
 		work += blockWork
 	}
+	err := cp.writer.Flush()
+	if err != nil {
+		return 0, fmt.Errorf("cannot flush data to primary file %s: %w", cp.file.Name(), err)
+	}
+
 	return work, nil
 }
 
@@ -203,6 +214,11 @@ func (cp *MultihashPrimary) Sync() error {
 }
 
 func (cp *MultihashPrimary) Close() error {
+	_, err := cp.Flush()
+	if err != nil {
+		cp.file.Close()
+		return err
+	}
 	return cp.file.Close()
 }
 

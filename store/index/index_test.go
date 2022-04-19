@@ -475,3 +475,62 @@ func TestIndexHeader(t *testing.T) {
 	t.Cleanup(func() { i2.Close() })
 	assertHeader(t, i2.headerPath, bucketBits)
 }
+
+func TestIndexGetBad(t *testing.T) {
+	key1 := []byte{1, 2, 3, 4, 5, 6, 9, 9, 9, 9}
+	key2 := []byte{1, 2, 3, 4, 5, 6, 7, 8, 9, 10}
+	key3 := []byte{1, 2, 3, 4, 5, 6, 9, 8, 8, 8}
+	key4 := []byte{1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11}
+
+	const bucketBits uint8 = 24
+	primaryStorage := inmemory.NewInmemory([][2][]byte{
+		{key1, {0x10}},
+		{[]byte("X"), {0x20}},
+		{key3, {0x30}},
+	})
+
+	tempDir := t.TempDir()
+	indexPath := filepath.Join(tempDir, "storethehash.index")
+	i, err := OpenIndex(indexPath, primaryStorage, bucketBits, 0)
+
+	require.NoError(t, err)
+	err = i.Put(key1, types.Block{Offset: 0, Size: 1})
+	require.NoError(t, err)
+	err = i.Put(key2, types.Block{Offset: 1, Size: 1})
+	require.NoError(t, err)
+	err = i.Put(key3, types.Block{Offset: 2, Size: 1})
+	require.NoError(t, err)
+
+	firstKeyBlock, found, err := i.Get(key1)
+	require.NoError(t, err)
+	require.True(t, found)
+	require.Equal(t, firstKeyBlock, types.Block{Offset: 0, Size: 1})
+
+	secondKeyBlock, found, err := i.Get(key2)
+	require.NoError(t, err)
+	require.True(t, found)
+	require.Equal(t, secondKeyBlock, types.Block{Offset: 1, Size: 1})
+
+	thirdKeyBlock, found, err := i.Get(key3)
+	require.NoError(t, err)
+	require.True(t, found)
+	require.Equal(t, thirdKeyBlock, types.Block{Offset: 2, Size: 1})
+
+	// This should result in the record for key2 being replaced.
+	err = i.Put(key4, types.Block{Offset: 1, Size: 1})
+	require.NoError(t, err)
+
+	fourthKeyBlock, found, err := i.Get(key4)
+	require.NoError(t, err)
+	require.True(t, found)
+	require.Equal(t, fourthKeyBlock, secondKeyBlock)
+
+	// Index for key2 should be same as index for key4
+	secondKeyBlock, found, err = i.Get(key2)
+	require.NoError(t, err)
+	require.True(t, found)
+	require.Equal(t, secondKeyBlock, fourthKeyBlock)
+
+	err = i.Close()
+	require.NoError(t, err)
+}

@@ -3,6 +3,7 @@ package cidprimary
 import (
 	"bufio"
 	"encoding/binary"
+	"fmt"
 	"io"
 	"os"
 	"sync"
@@ -174,6 +175,11 @@ func (cp *CIDPrimary) commit() (types.Work, error) {
 		}
 		work += blockWork
 	}
+	err := cp.writer.Flush()
+	if err != nil {
+		return 0, fmt.Errorf("cannot flush data to primary file %s: %w", cp.file.Name(), err)
+	}
+
 	return work, nil
 }
 
@@ -195,6 +201,11 @@ func (cp *CIDPrimary) Sync() error {
 }
 
 func (cp *CIDPrimary) Close() error {
+	_, err := cp.Flush()
+	if err != nil {
+		cp.file.Close()
+		return err
+	}
 	return cp.file.Close()
 }
 

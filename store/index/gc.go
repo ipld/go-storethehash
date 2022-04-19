@@ -123,7 +123,7 @@ func (i *Index) gcIndexFile(ctx context.Context, fileNum uint32, indexPath strin
 	defer file.Close()
 
 	inBuf := bufio.NewReader(file)
-	sizeBuffer := make([]byte, SizePrefixSize)
+	sizeBuffer := make([]byte, sizePrefixSize)
 	scratch := make([]byte, 256)
 	for {
 		if ctx.Err() != nil {

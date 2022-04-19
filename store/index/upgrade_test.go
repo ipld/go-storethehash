@@ -102,7 +102,7 @@ func TestChunkOldIndex(t *testing.T) {
 
 func testScanIndexFile(file *os.File, fileNum uint32, buckets Buckets, sizeBuckets SizeBuckets, prevSize int64) error {
 	buffered := bufio.NewReader(file)
-	sizeBuffer := make([]byte, SizePrefixSize)
+	sizeBuffer := make([]byte, sizePrefixSize)
 	scratch := make([]byte, 256)
 	var iterPos int64
 	for {
@@ -115,7 +115,7 @@ func testScanIndexFile(file *os.File, fileNum uint32, buckets Buckets, sizeBucke
 		}
 		size := binary.LittleEndian.Uint32(sizeBuffer)
 
-		pos := iterPos + SizePrefixSize
+		pos := iterPos + sizePrefixSize
 		iterPos = pos + int64(size)
 		if int(size) > len(scratch) {
 			scratch = make([]byte, size)

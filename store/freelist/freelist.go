@@ -3,6 +3,7 @@ package freelist
 import (
 	"bufio"
 	"encoding/binary"
+	"fmt"
 	"os"
 	"sync"
 
@@ -20,8 +21,13 @@ type FreeList struct {
 	poolLk            sync.RWMutex
 }
 
-const blockBufferSize = 32 * 4096
-const blockPoolSize = 1024
+const (
+	// blockBufferSize is the size of I/O buffers. If has the same size as the
+	// linux pipe size.
+	blockBufferSize = 16 * 4096
+	// blockPoolSize is the size of the freelist cache.
+	blockPoolSize = 1024
+)
 
 type blockPool struct {
 	blocks []types.Block
@@ -89,6 +95,11 @@ func (cp *FreeList) commit() (types.Work, error) {
 		}
 		work += blockWork
 	}
+	err := cp.writer.Flush()
+	if err != nil {
+		return 0, fmt.Errorf("cannot flush data to freelist file %s: %w", cp.file.Name(), err)
+	}
+
 	return work, nil
 }
 
@@ -143,7 +154,6 @@ func (cpi *FreeListIter) Next() (*types.Block, error) {
 
 	_, err = cpi.reader.ReadAt(sizeBuf, int64(cpi.pos))
 	if err != nil {
-
 		return nil, err
 	}
 	cpi.pos += types.SizeBytesLen
