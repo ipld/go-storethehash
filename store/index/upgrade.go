@@ -48,7 +48,7 @@ func upgradeIndex(name, headerPath string) error {
 }
 
 func readOldHeader(file *os.File) (byte, byte, types.Position, error) {
-	headerSizeBuffer := make([]byte, SizePrefixSize)
+	headerSizeBuffer := make([]byte, sizePrefixSize)
 	_, err := io.ReadFull(file, headerSizeBuffer)
 	if err != nil {
 		return 0, 0, 0, err
@@ -62,7 +62,7 @@ func readOldHeader(file *os.File) (byte, byte, types.Position, error) {
 	version := headerBytes[0]
 	bucketBits := headerBytes[1]
 
-	return version, bucketBits, types.Position(SizePrefixSize + headerSize), nil
+	return version, bucketBits, types.Position(sizePrefixSize + headerSize), nil
 }
 
 func chunkOldIndex(file *os.File, name string, fileSizeLimit int64) (uint32, error) {
@@ -75,7 +75,7 @@ func chunkOldIndex(file *os.File, name string, fileSizeLimit int64) (uint32, err
 	writer := bufio.NewWriterSize(outFile, indexBufferSize)
 	reader := bufio.NewReaderSize(file, indexBufferSize)
 
-	sizeBuffer := make([]byte, SizePrefixSize)
+	sizeBuffer := make([]byte, sizePrefixSize)
 	var written int64
 	for {
 		_, err = io.ReadFull(reader, sizeBuffer)
@@ -100,7 +100,7 @@ func chunkOldIndex(file *os.File, name string, fileSizeLimit int64) (uint32, err
 			outFile.Close()
 			return 0, fmt.Errorf("count not read complete entry from index")
 		}
-		written += SizePrefixSize + int64(size)
+		written += sizePrefixSize + int64(size)
 		if written >= fileSizeLimit {
 			if err = writer.Flush(); err != nil {
 				return 0, err
