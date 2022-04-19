@@ -391,11 +391,16 @@ func (i *Index) Put(key []byte, location types.Block) error {
 				// good, or that data in the index is bad and prevRecord.Bucket
 				// has a wrong location in the primary.  Log the error with
 				// diagnostic information.
-				cached, indexOffset, recordListSize, fileNum, err := i.readBucketInfo(bucket)
+				cached, indexOffset, _, fileNum, err := i.readBucketInfo(bucket)
 				if err != nil {
 					log.Errorw("Cannot read bucket", "err", err)
 				} else {
-					log.Errorw("Read bad pevious key data, too short", "cached", cached, "pos", indexOffset, "size", recordListSize, "file", indexFileName(i.basePath, fileNum))
+					msg := "Read bad pevious key data, too short"
+					if cached == nil {
+						log.Errorw(msg, "offset", indexOffset, "size", indexFileName(i.basePath, fileNum))
+					} else {
+						log.Error(msg)
+					}
 				}
 				// Either way, the previous key record is not usable, so
 				// overwrite it with a record for the new key.  Use the same
@@ -424,11 +429,16 @@ func (i *Index) Put(key []byte, location types.Block) error {
 			} else {
 				// trimmedPrevKey should always be a prefix. since it is not
 				// here, collect some diagnostic logs.
-				cached, indexOffset, recordListSize, fileNum, err := i.readBucketInfo(bucket)
+				cached, indexOffset, _, fileNum, err := i.readBucketInfo(bucket)
 				if err != nil {
 					log.Errorw("Cannot read bucket", "err", err)
 				} else {
-					log.Errorw("Read bad pevious key data", "cached", cached, "pos", indexOffset, "size", recordListSize, "file", indexFileName(i.basePath, fileNum))
+					msg := "Read bad pevious key data"
+					if cached == nil {
+						log.Errorw(msg, "offset", indexOffset, "size", indexFileName(i.basePath, fileNum))
+					} else {
+						log.Error(msg)
+					}
 				}
 			}
 			trimmedIndexKey := indexKey[:keyTrimPos+1]
