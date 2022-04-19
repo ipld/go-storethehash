@@ -409,8 +409,8 @@ func (i *Index) Put(key []byte, location types.Block) error {
 				// differentiate old from new.
 				//
 				// This results in the data for the previous keys being lost,
-				// but they may not have been present in the first place which
-				// was the cause of this problem.
+				// but it may not have been present in the first place, in which
+				// case that was the cause of this problem.
 				newData = records.PutKeys([]KeyPositionPair{{prevRecord.Key, location}}, prevRecord.Pos, pos)
 				i.outstandingWork += types.Work(len(newData) + BucketPrefixSize + sizePrefixSize)
 				i.nextPool[bucket] = newData
