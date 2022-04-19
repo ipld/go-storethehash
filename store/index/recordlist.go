@@ -24,7 +24,8 @@ const KeySizeBytes int = 1
 // which is a file offset.
 type KeyPositionPair struct {
 	Key []byte
-	// The file offset where the full key and its value is actually stored.
+	// The file offset, into the primary file, where the full key and its value
+	// is actually stored.
 	Block types.Block
 }
 

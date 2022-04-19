@@ -77,13 +77,18 @@ const (
 	bucketPoolSize = 1024
 )
 
-// Remove the prefix that is used for the bucket.
+// stripBucketPrefix removes the prefix that is used for the bucket.
 //
-// The first bits of a key are used to determine the bucket to put the key into. This function
-// removes those bytes. Only bytes that are fully covered by the bits are removed. E.g. a bit
-// value of 19 will remove only 2 bytes, whereas 24 bits removes 3 bytes.
-func StripBucketPrefix(key []byte, bits byte) []byte {
-	return key[(bits / 8):]
+// The first bits of a key are used to determine the bucket to put the key
+// into. This function removes those bytes. Only bytes that are fully covered
+// by the bits are removed. E.g. a bit value of 19 will remove only 2 bytes,
+// whereas 24 bits removes 3 bytes.
+func stripBucketPrefix(key []byte, bits byte) []byte {
+	prefixLen := int(bits / 8)
+	if len(key) < prefixLen {
+		return nil
+	}
+	return key[prefixLen:]
 }
 
 // Header contains information about the index.  This is actually stored in a
@@ -356,7 +361,7 @@ func (i *Index) Put(key []byte, location types.Block) error {
 
 	// The key does not need the prefix that was used to find the right
 	// bucket. For simplicity only full bytes are trimmed off.
-	indexKey := StripBucketPrefix(key, i.sizeBits)
+	indexKey := stripBucketPrefix(key, i.sizeBits)
 
 	// No records stored in that bucket yet
 	var newData []byte
@@ -370,7 +375,6 @@ func (i *Index) Put(key []byte, location types.Block) error {
 		pos, prevRecord, has := records.FindKeyPosition(indexKey)
 
 		if has && bytes.HasPrefix(indexKey, prevRecord.Key) {
-
 			// The previous key is fully contained in the current key. We need to read the full
 			// key from the main data file in order to retrieve a key that is distinguishable
 			// from the one that should get inserted.
@@ -380,7 +384,28 @@ func (i *Index) Put(key []byte, location types.Block) error {
 			}
 			// The index key has already removed the prefix that is used to determine the
 			// bucket. Do the same for the full previous key.
-			prevKey := StripBucketPrefix(fullPrevKey, i.sizeBits)
+			prevKey := stripBucketPrefix(fullPrevKey, i.sizeBits)
+			if prevKey == nil {
+				// The previous key, read from the primary, was bad. This means
+				// that the data in the primary at prevRecord.Bucket is not
+				// good, or that data in the index is bad and prevRecord.Bucket
+				// has a wrong location in the primary.
+				log.Errorw("Read bad previous key from primary, too short")
+				// Either way, the previous key record is not usable, so
+				// overwrite it with a record for the new key.  Use the same
+				// key in the index record as the previous record, since the
+				// previous key is being replaced so there is no need to
+				// differentiate old from new.
+				//
+				// This results in the data for the previous keys being lost,
+				// but they may not have been present in the first place which
+				// was the cause of this problem.
+				newData = records.PutKeys([]KeyPositionPair{{prevRecord.Key, location}}, prevRecord.Pos, pos)
+				i.outstandingWork += types.Work(len(newData) + BucketPrefixSize + sizePrefixSize)
+				i.nextPool[bucket] = newData
+				return nil
+			}
+
 			keyTrimPos := firstNonCommonByte(indexKey, prevKey)
 			// Only store the new key if it doesn't exist yet.
 			if keyTrimPos >= len(indexKey) {
@@ -473,7 +498,7 @@ func (i *Index) Update(key []byte, location types.Block) error {
 
 	// The key does not need the prefix that was used to find its bucket. For
 	// simplicity only full bytes are trimmed off.
-	indexKey := StripBucketPrefix(key, i.sizeBits)
+	indexKey := stripBucketPrefix(key, i.sizeBits)
 
 	var newData []byte
 	// If no records are stored in that bucket yet, it means there is no key to
@@ -512,7 +537,7 @@ func (i *Index) Remove(key []byte) (bool, error) {
 
 	// The key does not need the prefix that was used to find its bucket. For
 	// simplicity only full bytes are trimmed off.
-	indexKey := StripBucketPrefix(key, i.sizeBits)
+	indexKey := stripBucketPrefix(key, i.sizeBits)
 
 	var newData []byte
 	// If no records are stored in that bucket yet, it means there is no key to
@@ -752,7 +777,7 @@ func (i *Index) Get(key []byte) (types.Block, bool, error) {
 
 	// The key does not need the prefix that was used to find its bucket. For
 	// simplicity only full bytes are trimmed off.
-	indexKey := StripBucketPrefix(key, i.sizeBits)
+	indexKey := stripBucketPrefix(key, i.sizeBits)
 
 	fileOffset, found := records.Get(indexKey)
 	return fileOffset, found, nil
