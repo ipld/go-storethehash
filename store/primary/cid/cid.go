@@ -92,7 +92,9 @@ func (cp *CIDPrimary) Get(blk types.Block) (key []byte, value []byte, err error)
 		return
 	}
 	read := make([]byte, CIDSizePrefix+int(blk.Size))
-	cp.file.ReadAt(read, int64(blk.Offset))
+	if _, err = cp.file.ReadAt(read, int64(blk.Offset)); err != nil {
+		return
+	}
 	c, value, err := readNode(read[4:])
 	return c.Bytes(), value, err
 }

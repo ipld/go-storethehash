@@ -96,7 +96,9 @@ func (cp *MultihashPrimary) Get(blk types.Block) (key []byte, value []byte, err 
 		return
 	}
 	read := make([]byte, int(blk.Size+4))
-	cp.file.ReadAt(read, int64(blk.Offset))
+	if _, err = cp.file.ReadAt(read, int64(blk.Offset)); err != nil {
+		return
+	}
 	h, value, err := readNode(read[4:])
 	return h, value, err
 }
