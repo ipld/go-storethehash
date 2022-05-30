@@ -83,27 +83,30 @@ func (cp *CIDPrimary) getCached(blk types.Block) ([]byte, []byte, error) {
 	return nil, nil, nil
 }
 
-func (cp *CIDPrimary) Get(blk types.Block) (key []byte, value []byte, err error) {
-	key, value, err = cp.getCached(blk)
+func (cp *CIDPrimary) Get(blk types.Block) ([]byte, []byte, error) {
+	key, value, err := cp.getCached(blk)
 	if err != nil {
-		return
+		return nil, nil, err
 	}
 	if key != nil && value != nil {
-		return
+		return key, value, nil
 	}
 	read := make([]byte, CIDSizePrefix+int(blk.Size))
 	if _, err = cp.file.ReadAt(read, int64(blk.Offset)); err != nil {
-		return
+		return nil, nil, fmt.Errorf("error reading data from cid primary: %w", err)
 	}
 	c, value, err := readNode(read[4:])
-	return c.Bytes(), value, err
+	if err != nil {
+		return nil, nil, err
+	}
+	return c.Bytes(), value, nil
 }
 
 // readNode extracts the Cid from the data read and splits key and value.
 func readNode(data []byte) (cid.Cid, []byte, error) {
 	c, n, err := util.ReadCid(data)
 	if err != nil {
-		return cid.Cid{}, nil, err
+		return cid.Cid{}, nil, fmt.Errorf("error reading cid from data: %w", err)
 	}
 
 	return c, data[n:], nil

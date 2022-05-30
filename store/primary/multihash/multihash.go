@@ -87,20 +87,19 @@ func (cp *MultihashPrimary) getCached(blk types.Block) ([]byte, []byte, error) {
 	return nil, nil, nil
 }
 
-func (cp *MultihashPrimary) Get(blk types.Block) (key []byte, value []byte, err error) {
-	key, value, err = cp.getCached(blk)
+func (cp *MultihashPrimary) Get(blk types.Block) ([]byte, []byte, error) {
+	key, value, err := cp.getCached(blk)
 	if err != nil {
-		return
+		return nil, nil, err
 	}
 	if key != nil && value != nil {
-		return
+		return key, value, nil
 	}
 	read := make([]byte, int(blk.Size+4))
 	if _, err = cp.file.ReadAt(read, int64(blk.Offset)); err != nil {
-		return
+		return nil, nil, fmt.Errorf("error reading data from multihash primary: %w", err)
 	}
-	h, value, err := readNode(read[4:])
-	return h, value, err
+	return readNode(read[4:])
 }
 
 // readNode extracts the multihash from the data read and splits key and value.
@@ -118,7 +117,7 @@ func readMh(buf []byte) (mh.Multihash, int, error) {
 	mhr := mh.NewReader(br)
 	h, err := mhr.ReadMultihash()
 	if err != nil {
-		return mh.Multihash{}, 0, err
+		return mh.Multihash{}, 0, fmt.Errorf("error reading multihash from data: %w", err)
 	}
 
 	return h, len(buf) - br.Len(), nil
