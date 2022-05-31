@@ -328,7 +328,7 @@ func (s *Store) getPrimaryKeyData(blk types.Block, indexKey []byte) ([]byte, []b
 		return nil, nil, nil
 	}
 
-	// Compare to the indexKey with the storedKey read from the primary. This
+	// Compare the indexKey with the storedKey read from the primary. This
 	// determines if the indexKey was stored or if some other key with the same
 	// prefix was stored.
 	storedKey, err = s.index.Primary.IndexKey(storedKey)
