@@ -2,10 +2,12 @@ package store
 
 import (
 	"bytes"
+	"fmt"
 	"math"
 	"sync"
 	"time"
 
+	logging "github.com/ipfs/go-log/v2"
 	"github.com/ipld/go-storethehash/store/freelist"
 	"github.com/ipld/go-storethehash/store/index"
 	"github.com/ipld/go-storethehash/store/primary"
@@ -13,6 +15,8 @@ import (
 )
 
 const DefaultBurstRate = 4 * 1024 * 1024
+
+var log = logging.Logger("storethehash")
 
 type Store struct {
 	index    *index.Index
@@ -155,23 +159,15 @@ func (s *Store) Get(key []byte) ([]byte, bool, error) {
 	if !found {
 		return nil, false, nil
 	}
-	primaryKey, value, err := s.index.Primary.Get(fileOffset)
+
+	primaryKey, value, err := s.getPrimaryKeyData(fileOffset, indexKey)
 	if err != nil {
 		return nil, false, err
 	}
-
-	// We may be using a key that maps to the same indexKey
-	// in primary storage, so we need to check this the right way.
-	primaryKey, err = s.index.Primary.IndexKey(primaryKey)
-	if err != nil {
-		return nil, false, err
-	}
-
-	// The index stores only prefixes, hence check if the given key fully matches the
-	// key that is stored in the primary storage before returning the actual value.
-	if !bytes.Equal(indexKey, primaryKey) {
+	if primaryKey == nil {
 		return nil, false, nil
 	}
+
 	return value, true, nil
 }
 
@@ -203,33 +199,31 @@ func (s *Store) Put(key []byte, value []byte) error {
 	if err != nil {
 		return err
 	}
-	// If found get the key and value stored in primary to see if it is the same
-	// (index only stores prefixes)
+	// If found, get the key and value stored in primary to see if it is the
+	// same (index only stores prefixes).
 	var storedKey []byte
 	var storedVal []byte
+	var cmpKey bool
 	if found {
-		storedKey, storedVal, err = s.index.Primary.Get(prevOffset)
+		storedKey, storedVal, err = s.getPrimaryKeyData(prevOffset, indexKey)
 		if err != nil {
 			return err
 		}
 		// We need to compare to the resulting indexKey for the storedKey.
 		// Two keys may point to same IndexKey (i.e. two CIDS same multihash),
 		// and they need to be treated as the same key.
-		storedKey, err = s.index.Primary.IndexKey(storedKey)
-		if err != nil {
-			return err
+		if storedKey != nil {
+			cmpKey = true
 		}
-	}
-
-	cmpKey := bytes.Equal(indexKey, storedKey)
-
-	if cmpKey && bytes.Equal(value, storedVal) {
-		// We are trying to put the same value in an existing key,
-		// we can directly return
-		// NOTE: How many times is going to happen this. Can we save ourselves
-		// this step? We can't in the case of the blockstore and that is why we
-		// return an ErrKeyExists.
-		return types.ErrKeyExists
+		if bytes.Equal(value, storedVal) {
+			// Trying to put the same value in an existing key, so ok to
+			// directly return.
+			//
+			// NOTE: How many times is this going to happen. Can this step be
+			// removed? This is still needed for the blockstore and that is
+			// ErrKeyExists is returned..
+			return types.ErrKeyExists
+		}
 	}
 
 	// We are ready now to start putting/updating the value in the key.
@@ -243,7 +237,7 @@ func (s *Store) Put(key []byte, value []byte) error {
 
 	// If the key being set is not found, or the stored key is not equal
 	// (even if same prefix is shared @index), we put the key without updates
-	if !found || !cmpKey {
+	if !cmpKey {
 		if err = s.index.Put(indexKey, fileOffset); err != nil {
 			return err
 		}
@@ -288,24 +282,14 @@ func (s *Store) Remove(key []byte) (bool, error) {
 		return false, nil
 	}
 
-	// If found get the key and value stored in primary to see if it is the same
-	// (index only stores prefixes)
-	storedKey, _, err := s.index.Primary.Get(offset)
+	// If found, get the key and value stored in primary to see if it is the
+	// same (index only stores prefixes).
+	storedKey, _, err := s.getPrimaryKeyData(offset, indexKey)
 	if err != nil {
 		return false, err
 	}
-
-	// We need to compare to the resulting indexKey for the storedKey.
-	// Two keys may point to same IndexKey (i.e. two CIDS same multihash),
-	// and they need to be treated as the same key.
-	storedKey, err = s.index.Primary.IndexKey(storedKey)
-	if err != nil {
-		return false, err
-	}
-
-	// If keys are not equal, it means that the key doesn't exist and
-	// there's nothing to remove.
-	if !bytes.Equal(indexKey, storedKey) {
+	if storedKey == nil {
+		// The indexKey does not exist and there is nothing to remove.
 		return false, nil
 	}
 
@@ -323,6 +307,43 @@ func (s *Store) Remove(key []byte) (bool, error) {
 
 	s.flushTick()
 	return removed, nil
+}
+
+func (s *Store) getPrimaryKeyData(blk types.Block, indexKey []byte) ([]byte, []byte, error) {
+	// Get the key and value stored in primary to see if it is the same (index
+	// only stores prefixes).
+	storedKey, storedValue, err := s.index.Primary.Get(blk)
+	if err != nil {
+		// Log the error reading the primary, since no error is returned if the
+		// bad index is successfully deleted.
+		log.Errorw("Error reading primary, removing bad index", "err", err)
+		// The offset returned from the index is not usable, so delete the
+		// index entry regardless of which key in indexes. It is not safe to
+		// put this offset onto the free list, since it may be an invalid
+		// location in the primary.
+		if _, err = s.index.Remove(indexKey); err != nil {
+			return nil, nil, fmt.Errorf("error removing unusable key: %w", err)
+		}
+		s.flushTick()
+		return nil, nil, nil
+	}
+
+	// Compare the indexKey with the storedKey read from the primary. This
+	// determines if the indexKey was stored or if some other key with the same
+	// prefix was stored.
+	storedKey, err = s.index.Primary.IndexKey(storedKey)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	// The index stores only prefixes, hence check if the given key fully
+	// matches the key that is stored in the primary storage before returning
+	// the actual value.
+	if !bytes.Equal(indexKey, storedKey) {
+		return nil, nil, nil
+	}
+
+	return storedKey, storedValue, nil
 }
 
 func (s *Store) flushTick() {

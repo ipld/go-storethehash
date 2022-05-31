@@ -132,3 +132,40 @@ func TestRemove(t *testing.T) {
 	_, err = iter.Next()
 	require.EqualError(t, err, io.EOF.Error())
 }
+
+func TestRecoverBadKey(t *testing.T) {
+	tmpDir := t.TempDir()
+	indexPath := filepath.Join(tmpDir, "storethehash.index")
+	dataPath := filepath.Join(tmpDir, "storethehash.data")
+	primary, err := cidprimary.OpenCIDPrimary(dataPath)
+	require.NoError(t, err)
+	s, err := store.OpenStore(indexPath, primary, defaultIndexSizeBits, defaultSyncInterval, defaultBurstRate, defaultGCInterval)
+	require.NoError(t, err)
+
+	t.Logf("Putting blocks")
+	blks := testutil.GenerateBlocksOfSize(1, 100)
+	err = s.Put(blks[0].Cid().Bytes(), blks[0].RawData())
+	require.NoError(t, err)
+
+	// Close store and remove primary.
+	require.NoError(t, s.Close())
+	err = os.Remove(dataPath)
+	require.NoError(t, err)
+
+	// Open store again.
+	primary, err = cidprimary.OpenCIDPrimary(dataPath)
+	require.NoError(t, err)
+	s, err = store.OpenStore(indexPath, primary, defaultIndexSizeBits, defaultSyncInterval, defaultBurstRate, defaultGCInterval)
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, s.Close()) })
+
+	// Put data.
+	err = s.Put(blks[0].Cid().Bytes(), blks[0].RawData())
+	require.NoError(t, err)
+
+	// Get data.
+	value, found, err := s.Get(blks[0].Cid().Bytes())
+	require.NoError(t, err)
+	require.True(t, found)
+	require.Equal(t, value, blks[0].RawData())
+}
