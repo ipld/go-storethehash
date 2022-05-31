@@ -97,6 +97,9 @@ func (s *Store) run() {
 	}
 }
 
+// Close stops store goroutines and calls Close on the index, primary, and
+// freelist. This flushes any outstanding work and buffered data to their
+// files.
 func (s *Store) Close() error {
 	s.stateLk.Lock()
 	open := s.open
@@ -116,30 +119,20 @@ func (s *Store) Close() error {
 		<-s.closed
 	}
 
-	var err error
-	if s.outstandingWork() {
-		if _, err = s.commit(); err != nil {
-			s.setErr(err)
-		}
-	}
+	cerr := s.Err()
 
-	if err = s.Err(); err != nil {
-		return err
+	err := s.index.Close()
+	if err != nil {
+		cerr = err
 	}
-
-	if err = s.index.Close(); err != nil {
-		return err
-	}
-
 	if err = s.index.Primary.Close(); err != nil {
-		return err
+		cerr = err
 	}
-
 	if err = s.freelist.Close(); err != nil {
-		return err
+		cerr = err
 	}
 
-	return nil
+	return cerr
 }
 
 func (s *Store) Get(key []byte) ([]byte, bool, error) {
@@ -401,6 +394,8 @@ func (s *Store) outstandingWork() bool {
 	return s.index.OutstandingWork()+s.index.Primary.OutstandingWork() > 0
 }
 
+// Flush writes outstanding work and buffered data to the primary, index, and
+// freelist files. It then syncs these files to permanent storage.
 func (s *Store) Flush() {
 	lastFlush := time.Now()
 
@@ -481,7 +476,7 @@ func (s *Store) GetSize(key []byte) (types.Size, bool, error) {
 	return blk.Size - types.Size(len(key)), true, nil
 }
 
-// IndexStorageSize returns the storage used by the index files.  This includs
+// IndexStorageSize returns the storage used by the index files. This includes
 // the `.info` file and the `.free` file and does not include primary storage.
 func (s *Store) IndexStorageSize() (int64, error) {
 	return s.index.StorageSize()

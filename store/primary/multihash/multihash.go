@@ -171,11 +171,10 @@ func (cp *MultihashPrimary) GetIndexKey(blk types.Block) ([]byte, error) {
 	return cp.IndexKey(key)
 }
 
-func (cp *MultihashPrimary) commit() (types.Work, error) {
+// Flush writes outstanding work and buffered data to the primary file.
+func (cp *MultihashPrimary) Flush() (types.Work, error) {
 	cp.poolLk.Lock()
-	nextPool := cp.curPool
-	cp.curPool = cp.nextPool
-	cp.nextPool = nextPool
+	cp.curPool, cp.nextPool = cp.nextPool, cp.curPool
 	cp.outstandingWork = 0
 	cp.poolLk.Unlock()
 	if len(cp.curPool.blocks) == 0 {
@@ -197,14 +196,9 @@ func (cp *MultihashPrimary) commit() (types.Work, error) {
 	return work, nil
 }
 
-func (cp *MultihashPrimary) Flush() (types.Work, error) {
-	return cp.commit()
-}
-
+// Sync commits the contents of the primary file to disk. Flush should be
+// called before calling Sync.
 func (cp *MultihashPrimary) Sync() error {
-	if err := cp.writer.Flush(); err != nil {
-		return err
-	}
 	if err := cp.file.Sync(); err != nil {
 		return err
 	}
@@ -214,6 +208,8 @@ func (cp *MultihashPrimary) Sync() error {
 	return nil
 }
 
+// Close calls Flush to write work and data to the primary file, and then
+// closes the file.
 func (cp *MultihashPrimary) Close() error {
 	_, err := cp.Flush()
 	if err != nil {
