@@ -315,7 +315,7 @@ func (s *Store) getPrimaryKeyData(blk types.Block, indexKey []byte) ([]byte, []b
 	storedKey, storedValue, err := s.index.Primary.Get(blk)
 	if err != nil {
 		// Log the error reading the primary, since no error is returned if the
-		// bad index is sucessfully deleted.
+		// bad index is successfully deleted.
 		log.Errorw("Error reading primary, removing bad index", "err", err)
 		// The offset returned from the index is not usable, so delete the
 		// index entry regardless of which key in indexes. It is not safe to
