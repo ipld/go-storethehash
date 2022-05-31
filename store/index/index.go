@@ -673,53 +673,6 @@ type bucketBlock struct {
 	blk    types.Block
 }
 
-func (i *Index) commit() (types.Work, error) {
-	i.bucketLk.Lock()
-	nextPool := i.curPool
-	i.curPool = i.nextPool
-	i.nextPool = nextPool
-	i.outstandingWork = 0
-	i.bucketLk.Unlock()
-	if len(i.curPool) == 0 {
-		return 0, nil
-	}
-	blks := make([]bucketBlock, 0, len(i.curPool))
-	var work types.Work
-	for bucket, data := range i.curPool {
-		blk, newWork, err := i.flushBucket(bucket, data)
-		if err != nil {
-			return 0, err
-		}
-		blks = append(blks, bucketBlock{bucket, blk})
-		work += newWork
-	}
-	err := i.writer.Flush()
-	if err != nil {
-		return 0, fmt.Errorf("cannot flush data to index file %s: %w", i.file.Name(), err)
-	}
-	i.bucketLk.Lock()
-	defer i.bucketLk.Unlock()
-	for _, blk := range blks {
-		bucket := blk.bucket
-		if err = i.buckets.Put(bucket, blk.blk.Offset); err != nil {
-			return 0, fmt.Errorf("error commiting bucket: %w", err)
-		}
-		if err = i.sizeBuckets.Put(bucket, blk.blk.Size); err != nil {
-			return 0, fmt.Errorf("error commiting size bucket: %w", err)
-		}
-	}
-
-	if i.updateSig != nil {
-		// Send signal to tell GC there are updates.
-		select {
-		case i.updateSig <- struct{}{}:
-		default:
-		}
-	}
-
-	return work, nil
-}
-
 func (i *Index) readBucketInfo(bucket BucketIndex) ([]byte, types.Position, types.Size, uint32, error) {
 	data, ok := i.nextPool[bucket]
 	if ok {
@@ -801,14 +754,56 @@ func (i *Index) Get(key []byte) (types.Block, bool, error) {
 	return fileOffset, found, nil
 }
 
+// Flush writes outstanding work and buffered data to the current index file
+// and updates buckets.
 func (i *Index) Flush() (types.Work, error) {
-	return i.commit()
+	i.bucketLk.Lock()
+	i.curPool, i.nextPool = i.nextPool, i.curPool
+	i.outstandingWork = 0
+	i.bucketLk.Unlock()
+	if len(i.curPool) == 0 {
+		return 0, nil
+	}
+	blks := make([]bucketBlock, 0, len(i.curPool))
+	var work types.Work
+	for bucket, data := range i.curPool {
+		blk, newWork, err := i.flushBucket(bucket, data)
+		if err != nil {
+			return 0, err
+		}
+		blks = append(blks, bucketBlock{bucket, blk})
+		work += newWork
+	}
+	err := i.writer.Flush()
+	if err != nil {
+		return 0, fmt.Errorf("cannot flush data to index file %s: %w", i.file.Name(), err)
+	}
+	i.bucketLk.Lock()
+	defer i.bucketLk.Unlock()
+	for _, blk := range blks {
+		bucket := blk.bucket
+		if err = i.buckets.Put(bucket, blk.blk.Offset); err != nil {
+			return 0, fmt.Errorf("error commiting bucket: %w", err)
+		}
+		if err = i.sizeBuckets.Put(bucket, blk.blk.Size); err != nil {
+			return 0, fmt.Errorf("error commiting size bucket: %w", err)
+		}
+	}
+
+	if i.updateSig != nil {
+		// Send signal to tell GC there are updates.
+		select {
+		case i.updateSig <- struct{}{}:
+		default:
+		}
+	}
+
+	return work, nil
 }
 
+// Sync commits the contents of the current index file to disk. Flush should be
+// called before calling Sync.
 func (i *Index) Sync() error {
-	if err := i.writer.Flush(); err != nil {
-		return err
-	}
 	if err := i.file.Sync(); err != nil {
 		return err
 	}
@@ -818,6 +813,8 @@ func (i *Index) Sync() error {
 	return nil
 }
 
+// Close calls Flush to write work and data to the current index file, and then
+// closes the file.
 func (i *Index) Close() error {
 	if i.updateSig != nil {
 		close(i.updateSig)

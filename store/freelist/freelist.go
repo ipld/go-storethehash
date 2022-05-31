@@ -77,7 +77,8 @@ func (cp *FreeList) flushBlock(blk types.Block) (types.Work, error) {
 	return types.Work(types.SizeBytesLen + types.OffBytesLen), nil
 }
 
-func (cp *FreeList) commit() (types.Work, error) {
+// Flush writes outstanding work and buffered data to the freelist file.
+func (cp *FreeList) Flush() (types.Work, error) {
 	cp.poolLk.Lock()
 	nextPool := cp.curPool
 	cp.curPool = cp.nextPool
@@ -103,14 +104,9 @@ func (cp *FreeList) commit() (types.Work, error) {
 	return work, nil
 }
 
-func (cp *FreeList) Flush() (types.Work, error) {
-	return cp.commit()
-}
-
+// Sync commits the contents of the freelist file to disk. Flush should be
+// called before calling Sync.
 func (cp *FreeList) Sync() error {
-	if err := cp.writer.Flush(); err != nil {
-		return err
-	}
 	if err := cp.file.Sync(); err != nil {
 		return err
 	}
@@ -120,7 +116,14 @@ func (cp *FreeList) Sync() error {
 	return nil
 }
 
+// Close calls Flush to write work and data to the freelist file, and then
+// closes the file.
 func (cp *FreeList) Close() error {
+	_, err := cp.Flush()
+	if err != nil {
+		cp.file.Close()
+		return err
+	}
 	return cp.file.Close()
 }
 
