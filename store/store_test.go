@@ -157,6 +157,7 @@ func TestRecoverBadKey(t *testing.T) {
 	require.NoError(t, err)
 	s, err = store.OpenStore(indexPath, primary, defaultIndexSizeBits, defaultSyncInterval, defaultBurstRate, defaultGCInterval)
 	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, s.Close()) })
 
 	// Put data.
 	err = s.Put(blks[0].Cid().Bytes(), blks[0].RawData())
@@ -167,6 +168,4 @@ func TestRecoverBadKey(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, found)
 	require.Equal(t, value, blks[0].RawData())
-
-	t.Cleanup(func() { require.NoError(t, s.Close()) })
 }
