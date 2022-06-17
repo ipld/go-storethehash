@@ -9,7 +9,6 @@ import (
 	"sync"
 
 	"github.com/ipfs/go-cid"
-	util "github.com/ipld/go-car/util"
 	"github.com/ipld/go-storethehash/store/primary"
 	"github.com/ipld/go-storethehash/store/types"
 	"github.com/multiformats/go-multihash"
@@ -104,7 +103,7 @@ func (cp *CIDPrimary) Get(blk types.Block) ([]byte, []byte, error) {
 
 // readNode extracts the Cid from the data read and splits key and value.
 func readNode(data []byte) (cid.Cid, []byte, error) {
-	c, n, err := util.ReadCid(data)
+	n, c, err := cid.CidFromBytes(data)
 	if err != nil {
 		return cid.Cid{}, nil, fmt.Errorf("error reading cid from data: %w", err)
 	}
