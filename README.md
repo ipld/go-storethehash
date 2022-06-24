@@ -1,7 +1,9 @@
 # go-storethehash
 
-go port of github.com/vmx/storethehash
+> This is a storage for hashes. Targeted at content addressable systems.
 
-The above repo contains most of the relevant information on design.
+go port of [vmx/storethehash](https://github.com/vmx/storethehash#readme)
 
-I also ported techniques from github.com/iand/gonudb & github.com/CPPAlliance/nudb to support parallelism
+The above repo contains most of the relevant [information on design](https://github.com/vmx/storethehash#how-it-works).
+
+I also ported techniques from [iand/gonudb](https://github.com/iand/gonudb) & [CPPAlliance/nudb](https://github.com/CPPAlliance/nudb) to support parallelism
