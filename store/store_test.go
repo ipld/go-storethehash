@@ -20,14 +20,14 @@ const defaultBurstRate = 4 * 1024 * 1024
 const defaultSyncInterval = time.Second
 const defaultGCInterval = 0 //30 * time.Minute
 
-func initStore(t *testing.T, dir string) (*store.Store, error) {
+func initStore(t *testing.T, dir string, immutable bool) (*store.Store, error) {
 	indexPath := filepath.Join(dir, "storethehash.index")
 	dataPath := filepath.Join(dir, "storethehash.data")
 	primary, err := cidprimary.OpenCIDPrimary(dataPath)
 	if err != nil {
 		return nil, err
 	}
-	store, err := store.OpenStore(indexPath, primary, defaultIndexSizeBits, defaultSyncInterval, defaultBurstRate, defaultGCInterval)
+	store, err := store.OpenStore(indexPath, primary, defaultIndexSizeBits, defaultSyncInterval, defaultBurstRate, defaultGCInterval, immutable)
 	if err != nil {
 		_ = primary.Close()
 		return nil, err
@@ -37,56 +37,101 @@ func initStore(t *testing.T, dir string) (*store.Store, error) {
 }
 
 func TestUpdate(t *testing.T) {
-	tempDir := t.TempDir()
-	s, err := initStore(t, tempDir)
-	require.NoError(t, err)
-	blks := testutil.GenerateBlocksOfSize(2, 100)
+	t.Run("when not immutable", func(t *testing.T) {
+		tempDir := t.TempDir()
+		s, err := initStore(t, tempDir, false)
+		require.NoError(t, err)
+		blks := testutil.GenerateBlocksOfSize(2, 100)
 
-	t.Logf("Putting a new block")
-	err = s.Put(blks[0].Cid().Bytes(), blks[0].RawData())
-	require.NoError(t, err)
-	value, found, err := s.Get(blks[0].Cid().Bytes())
-	require.NoError(t, err)
-	require.True(t, found)
-	require.Equal(t, value, blks[0].RawData())
+		t.Logf("Putting a new block")
+		err = s.Put(blks[0].Cid().Bytes(), blks[0].RawData())
+		require.NoError(t, err)
+		value, found, err := s.Get(blks[0].Cid().Bytes())
+		require.NoError(t, err)
+		require.True(t, found)
+		require.Equal(t, value, blks[0].RawData())
 
-	t.Logf("Overwrite same key with different value")
-	err = s.Put(blks[0].Cid().Bytes(), blks[1].RawData())
-	require.NoError(t, err)
-	value, found, err = s.Get(blks[0].Cid().Bytes())
-	require.NoError(t, err)
-	require.True(t, found)
-	require.Equal(t, value, blks[1].RawData())
+		t.Logf("Overwrite same key with different value")
+		err = s.Put(blks[0].Cid().Bytes(), blks[1].RawData())
+		require.NoError(t, err)
+		value, found, err = s.Get(blks[0].Cid().Bytes())
+		require.NoError(t, err)
+		require.True(t, found)
+		require.Equal(t, value, blks[1].RawData())
 
-	t.Logf("Overwrite same key with same value")
-	err = s.Put(blks[0].Cid().Bytes(), blks[1].RawData())
-	require.Error(t, err, types.ErrKeyExists.Error())
-	value, found, err = s.Get(blks[0].Cid().Bytes())
-	require.NoError(t, err)
-	require.True(t, found)
-	require.Equal(t, value, blks[1].RawData())
+		t.Logf("Overwrite same key with same value")
+		err = s.Put(blks[0].Cid().Bytes(), blks[1].RawData())
+		require.Error(t, err, types.ErrKeyExists.Error())
+		value, found, err = s.Get(blks[0].Cid().Bytes())
+		require.NoError(t, err)
+		require.True(t, found)
+		require.Equal(t, value, blks[1].RawData())
 
-	s.Flush()
+		s.Flush()
 
-	// Start iterator
-	flPath := filepath.Join(tempDir, "storethehash.index.free")
-	file, err := os.Open(flPath)
-	require.NoError(t, err)
-	t.Cleanup(func() { require.NoError(t, file.Close()) })
+		// Start iterator
+		flPath := filepath.Join(tempDir, "storethehash.index.free")
+		file, err := os.Open(flPath)
+		require.NoError(t, err)
+		t.Cleanup(func() { require.NoError(t, file.Close()) })
 
-	iter := freelist.NewFreeListIter(file)
-	// Check freelist for the only update. Should be the first position
-	blk, err := iter.Next()
-	require.Equal(t, blk.Offset, types.Position(0))
-	require.NoError(t, err)
-	// Check that is the last
-	_, err = iter.Next()
-	require.EqualError(t, err, io.EOF.Error())
+		iter := freelist.NewFreeListIter(file)
+		// Check freelist for the only update. Should be the first position
+		blk, err := iter.Next()
+		require.Equal(t, blk.Offset, types.Position(0))
+		require.NoError(t, err)
+		// Check that is the last
+		_, err = iter.Next()
+		require.EqualError(t, err, io.EOF.Error())
+	})
+	t.Run("when immutable", func(t *testing.T) {
+		tempDir := t.TempDir()
+		s, err := initStore(t, tempDir, true)
+		require.NoError(t, err)
+		blks := testutil.GenerateBlocksOfSize(2, 100)
+
+		t.Logf("Putting a new block")
+		err = s.Put(blks[0].Cid().Bytes(), blks[0].RawData())
+		require.NoError(t, err)
+		value, found, err := s.Get(blks[0].Cid().Bytes())
+		require.NoError(t, err)
+		require.True(t, found)
+		require.Equal(t, value, blks[0].RawData())
+
+		t.Logf("Overwrite same key with different value")
+		err = s.Put(blks[0].Cid().Bytes(), blks[1].RawData())
+		require.Error(t, err, types.ErrKeyExists.Error())
+		value, found, err = s.Get(blks[0].Cid().Bytes())
+		require.NoError(t, err)
+		require.True(t, found)
+		require.Equal(t, value, blks[0].RawData())
+
+		t.Logf("Overwrite same key with same value")
+		err = s.Put(blks[0].Cid().Bytes(), blks[1].RawData())
+		require.Error(t, err, types.ErrKeyExists.Error())
+		value, found, err = s.Get(blks[0].Cid().Bytes())
+		require.NoError(t, err)
+		require.True(t, found)
+		require.Equal(t, value, blks[0].RawData())
+
+		s.Flush()
+
+		// Start iterator
+		flPath := filepath.Join(tempDir, "storethehash.index.free")
+		file, err := os.Open(flPath)
+		require.NoError(t, err)
+		t.Cleanup(func() { require.NoError(t, file.Close()) })
+
+		iter := freelist.NewFreeListIter(file)
+		// Check freelist -- no updates
+		_, err = iter.Next()
+		require.EqualError(t, err, io.EOF.Error())
+	})
 }
 
 func TestRemove(t *testing.T) {
 	tempDir := t.TempDir()
-	s, err := initStore(t, tempDir)
+	s, err := initStore(t, tempDir, false)
 	require.NoError(t, err)
 	blks := testutil.GenerateBlocksOfSize(2, 100)
 
@@ -139,7 +184,7 @@ func TestRecoverBadKey(t *testing.T) {
 	dataPath := filepath.Join(tmpDir, "storethehash.data")
 	primary, err := cidprimary.OpenCIDPrimary(dataPath)
 	require.NoError(t, err)
-	s, err := store.OpenStore(indexPath, primary, defaultIndexSizeBits, defaultSyncInterval, defaultBurstRate, defaultGCInterval)
+	s, err := store.OpenStore(indexPath, primary, defaultIndexSizeBits, defaultSyncInterval, defaultBurstRate, defaultGCInterval, false)
 	require.NoError(t, err)
 
 	t.Logf("Putting blocks")
@@ -155,7 +200,7 @@ func TestRecoverBadKey(t *testing.T) {
 	// Open store again.
 	primary, err = cidprimary.OpenCIDPrimary(dataPath)
 	require.NoError(t, err)
-	s, err = store.OpenStore(indexPath, primary, defaultIndexSizeBits, defaultSyncInterval, defaultBurstRate, defaultGCInterval)
+	s, err = store.OpenStore(indexPath, primary, defaultIndexSizeBits, defaultSyncInterval, defaultBurstRate, defaultGCInterval, false)
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, s.Close()) })
 
