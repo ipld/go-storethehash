@@ -36,9 +36,10 @@ type Store struct {
 	closing      chan struct{}
 	flushNow     chan struct{}
 	syncInterval time.Duration
+	immutable    bool
 }
 
-func OpenStore(path string, primary primary.PrimaryStorage, indexSizeBits uint8, syncInterval time.Duration, burstRate types.Work, gcInterval time.Duration) (*Store, error) {
+func OpenStore(path string, primary primary.PrimaryStorage, indexSizeBits uint8, syncInterval time.Duration, burstRate types.Work, gcInterval time.Duration, immutable bool) (*Store, error) {
 	index, err := index.OpenIndex(path, primary, indexSizeBits, gcInterval)
 	if err != nil {
 		return nil, err
@@ -58,6 +59,7 @@ func OpenStore(path string, primary primary.PrimaryStorage, indexSizeBits uint8,
 		closed:       make(chan struct{}),
 		closing:      make(chan struct{}),
 		flushNow:     make(chan struct{}, 1),
+		immutable:    immutable,
 	}
 	return store, nil
 }
@@ -206,6 +208,11 @@ func (s *Store) Put(key []byte, value []byte) error {
 		// Two keys may point to same IndexKey (i.e. two CIDS same multihash),
 		// and they need to be treated as the same key.
 		if storedKey != nil {
+			// if we're not accepting updates, this is the point we bail --
+			// the identical key is in primary storage, we don't do update operations
+			if s.immutable {
+				return types.ErrKeyExists
+			}
 			cmpKey = true
 		}
 		if bytes.Equal(value, storedVal) {
