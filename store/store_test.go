@@ -1,17 +1,20 @@
 package store_test
 
 import (
+	"crypto/rand"
 	"io"
 	"os"
 	"path/filepath"
 	"testing"
 	"time"
 
+	"github.com/ipfs/go-cid"
 	store "github.com/ipld/go-storethehash/store"
 	"github.com/ipld/go-storethehash/store/freelist"
 	cidprimary "github.com/ipld/go-storethehash/store/primary/cid"
 	"github.com/ipld/go-storethehash/store/testutil"
 	"github.com/ipld/go-storethehash/store/types"
+	"github.com/multiformats/go-multihash"
 	"github.com/stretchr/testify/require"
 )
 
@@ -113,6 +116,56 @@ func TestUpdate(t *testing.T) {
 		require.NoError(t, err)
 		require.True(t, found)
 		require.Equal(t, value, blks[0].RawData())
+
+		s.Flush()
+
+		// Start iterator
+		flPath := filepath.Join(tempDir, "storethehash.index.free")
+		file, err := os.Open(flPath)
+		require.NoError(t, err)
+		t.Cleanup(func() { require.NoError(t, file.Close()) })
+
+		iter := freelist.NewFreeListIter(file)
+		// Check freelist -- no updates
+		_, err = iter.Next()
+		require.EqualError(t, err, io.EOF.Error())
+	})
+	t.Run("when immutable with nearly identical CIDs", func(t *testing.T) {
+		tempDir := t.TempDir()
+		s, err := initStore(t, tempDir, true)
+		require.NoError(t, err)
+		block1 := make([]byte, 100)
+		_, _ = rand.Read(block1)
+
+		cid1, err := cid.V1Builder{
+			Codec:    cid.Raw,
+			MhType:   multihash.IDENTITY,
+			MhLength: -1,
+		}.Sum([]byte("Hello I am a cid multihash, the absolute #1"))
+		require.NoError(t, err)
+
+		cid2, err := cid.V1Builder{
+			Codec:    cid.Raw,
+			MhType:   multihash.IDENTITY,
+			MhLength: -1,
+		}.Sum([]byte("Hello I am a cid multihash, the absolute #2"))
+		require.NoError(t, err)
+
+		t.Logf("Putting a new block")
+		err = s.Put(cid1.Bytes(), block1)
+		require.NoError(t, err)
+		value, found, err := s.Get(cid1.Bytes())
+		require.NoError(t, err)
+		require.True(t, found)
+		require.Equal(t, value, block1)
+
+		t.Logf("Overwrite similar key with same value")
+		err = s.Put(cid2.Bytes(), block1)
+		require.NoError(t, err)
+		value, found, err = s.Get(cid2.Bytes())
+		require.NoError(t, err)
+		require.True(t, found)
+		require.Equal(t, value, block1)
 
 		s.Flush()
 
