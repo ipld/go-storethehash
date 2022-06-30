@@ -14,6 +14,12 @@ import (
 
 var log = logging.Logger("storethehash/index")
 
+// Checkpoint is the last bucket index still in use by first file.
+var (
+	hasCheckpoint    bool
+	lastBucketPrefix BucketIndex
+)
+
 // garbageCollector is a goroutine that runs periodically, to search for and
 // remove stale index files.  It runs every gcInterval, if there have been any
 // index updates.
@@ -79,6 +85,22 @@ func (i *Index) gc(ctx context.Context) (int, error) {
 		return 0, err
 	}
 	fileNum := header.FirstFile
+
+	// Before scanning the index files, check if the first index file is still
+	// in use by the bucket index last seen using it.
+	if hasCheckpoint {
+		inUse, err := i.bucketInFile(lastBucketPrefix, fileNum)
+		if err != nil {
+			hasCheckpoint = false
+			return 0, err
+		}
+		if inUse {
+			// First index file still used to store info.
+			return 0, nil
+		}
+		// Checkpoint bucket checked.
+		hasCheckpoint = false
+	}
 
 	var count int
 	for {
@@ -151,18 +173,31 @@ func (i *Index) gcIndexFile(ctx context.Context, fileNum uint32, indexPath strin
 		}
 
 		bucketPrefix := BucketIndex(binary.LittleEndian.Uint32(data))
-		i.bucketLk.Lock()
-		bucketPos, err := i.buckets.Get(bucketPrefix)
-		i.bucketLk.Unlock()
+		inUse, err := i.bucketInFile(bucketPrefix, fileNum)
 		if err != nil {
 			return false, err
 		}
-		ok, fnum := bucketPosToFileNum(bucketPos)
-		if ok && fnum == fileNum {
+		if inUse {
 			// This index file is in use by the bucket, so no GC for this file.
+			hasCheckpoint = true
+			lastBucketPrefix = bucketPrefix
 			return false, nil
 		}
 	}
 
 	return true, nil
+}
+
+func (i *Index) bucketInFile(bucketPrefix BucketIndex, fileNum uint32) (bool, error) {
+	i.bucketLk.Lock()
+	bucketPos, err := i.buckets.Get(bucketPrefix)
+	i.bucketLk.Unlock()
+	if err != nil {
+		return false, err
+	}
+	ok, fnum := bucketPosToFileNum(bucketPos)
+	if ok && fnum == fileNum {
+		return true, nil
+	}
+	return false, nil
 }
