@@ -91,10 +91,11 @@ func (i *Index) gc(ctx context.Context) (int, error) {
 	if hasCheckpoint {
 		inUse, err := i.bucketInFile(lastBucketPrefix, fileNum)
 		if err != nil {
+			hasCheckpoint = false
 			return 0, err
 		}
 		if inUse {
-			// First index file still used to store info for prevbucket.
+			// First index file still used to store info.
 			return 0, nil
 		}
 	}
