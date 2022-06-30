@@ -94,7 +94,6 @@ func (i *Index) gc(ctx context.Context) (int, error) {
 			return 0, err
 		}
 		if inUse {
-			fmt.Println("---> Skipped GC, first file still in use")
 			// First index file still used to store info for prevbucket.
 			return 0, nil
 		}
