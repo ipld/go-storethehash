@@ -98,8 +98,9 @@ func (i *Index) gc(ctx context.Context) (int, error) {
 			// First index file still used to store info.
 			return 0, nil
 		}
+		// Checkpoint bucket checked.
+		hasCheckpoint = false
 	}
-	hasCheckpoint = false
 
 	var count int
 	for {
