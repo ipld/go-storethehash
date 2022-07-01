@@ -23,6 +23,7 @@ func TestGC(t *testing.T) {
 	dataPath := filepath.Join(tempDir, "storethehash.data")
 	primary, err := mhprimary.OpenMultihashPrimary(dataPath)
 	require.NoError(t, err)
+	defer primary.Close()
 
 	idx, err := OpenIndex(indexPath, primary, 24, 1024, 0)
 	require.NoError(t, err)
