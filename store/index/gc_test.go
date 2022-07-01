@@ -64,8 +64,8 @@ func TestGC(t *testing.T) {
 	// Check that first file is .2 and last file is .24
 	header, err := readHeader(idx.headerPath)
 	require.NoError(t, err)
-	require.Equal(t, header.FirstFile, 2)
-	require.Equal(t, idx.fileNum, 24)
+	require.Equal(t, header.FirstFile, uint32(2))
+	require.Equal(t, idx.fileNum, uint32(24))
 }
 
 func copyFile(src, dst string) error {
