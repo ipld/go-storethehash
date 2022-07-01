@@ -9,6 +9,11 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+const (
+	bucketBits uint8  = 24
+	fileSize   uint32 = 1024 * 1024 * 1024
+)
+
 func TestFirstNonCommonByte(t *testing.T) {
 	require.Equal(t, firstNonCommonByte([]byte{0}, []byte{1}), 0)
 	require.Equal(t, firstNonCommonByte([]byte{0}, []byte{0}), 1)
@@ -31,11 +36,10 @@ func assertHeader(t *testing.T, headerPath string, bucketsBits uint8) {
 // Asserts that given two keys that on the first insert the key is trimmed to a single byte and on
 // the second insert they are trimmed to the minimal distinguishable prefix
 func assertCommonPrefixTrimmed(t *testing.T, key1 []byte, key2 []byte, expectedKeyLength int) {
-	const bucketBits uint8 = 24
 	primaryStorage := inmemory.NewInmemory([][2][]byte{{key1, {0x20}}, {key2, {0x30}}})
 	tempDir := t.TempDir()
 	indexPath := filepath.Join(tempDir, "storethehash.index")
-	i, err := OpenIndex(indexPath, primaryStorage, bucketBits, 0)
+	i, err := OpenIndex(indexPath, primaryStorage, bucketBits, fileSize, 0)
 	require.NoError(t, err)
 	err = i.Put(key1, types.Block{Offset: 0, Size: 1})
 	require.NoError(t, err)
@@ -90,11 +94,10 @@ func assertCommonPrefixTrimmed(t *testing.T, key1 []byte, key2 []byte, expectedK
 // to a single byte.
 
 func TestIndexPutSingleKey(t *testing.T) {
-	const bucketBits uint8 = 24
 	primaryStorage := inmemory.NewInmemory([][2][]byte{})
 	tempDir := t.TempDir()
 	indexPath := filepath.Join(tempDir, "storethehash.index")
-	i, err := OpenIndex(indexPath, primaryStorage, bucketBits, 0)
+	i, err := OpenIndex(indexPath, primaryStorage, bucketBits, fileSize, 0)
 	require.NoError(t, err)
 	err = i.Put([]byte{1, 2, 3, 4, 5, 6, 7, 8, 9, 10}, types.Block{Offset: 222, Size: 10})
 	require.NoError(t, err)
@@ -130,11 +133,10 @@ func TestIndexRemoveKey(t *testing.T) {
 	b1 := types.Block{Offset: 0, Size: 1}
 	b2 := types.Block{Offset: 1, Size: 2}
 
-	const bucketBits uint8 = 24
 	primaryStorage := inmemory.NewInmemory([][2][]byte{})
 	tempDir := t.TempDir()
 	indexPath := filepath.Join(tempDir, "storethehash.index")
-	i, err := OpenIndex(indexPath, primaryStorage, bucketBits, 0)
+	i, err := OpenIndex(indexPath, primaryStorage, bucketBits, fileSize, 0)
 	require.NoError(t, err)
 	// Put key 1
 	err = i.Put(k1, b1)
@@ -199,11 +201,10 @@ func TestIndexRemoveKey(t *testing.T) {
 // This test is about making sure that a new key that doesn't share any prefix with other keys
 // within the same bucket is trimmed to a single byte.
 func TestIndexPutDistinctKey(t *testing.T) {
-	const bucketBits uint8 = 24
 	primaryStorage := inmemory.NewInmemory([][2][]byte{})
 	tempDir := t.TempDir()
 	indexPath := filepath.Join(tempDir, "storethehash.index")
-	i, err := OpenIndex(indexPath, primaryStorage, bucketBits, 0)
+	i, err := OpenIndex(indexPath, primaryStorage, bucketBits, fileSize, 0)
 	require.NoError(t, err)
 	err = i.Put([]byte{1, 2, 3, 4, 5, 6, 7, 8, 9, 10}, types.Block{Offset: 222, Size: 10})
 	require.NoError(t, err)
@@ -240,11 +241,10 @@ func TestIndexPutDistinctKey(t *testing.T) {
 }
 
 func TestCorrectCacheReading(t *testing.T) {
-	const bucketBits uint8 = 24
 	primaryStorage := inmemory.NewInmemory([][2][]byte{})
 	tempDir := t.TempDir()
 	indexPath := filepath.Join(tempDir, "storethehash.index")
-	i, err := OpenIndex(indexPath, primaryStorage, bucketBits, 0)
+	i, err := OpenIndex(indexPath, primaryStorage, bucketBits, fileSize, 0)
 	require.NoError(t, err)
 	// put key in, then flush the cache
 	err = i.Put([]byte{1, 2, 3, 4, 5, 6, 7, 8, 9, 10}, types.Block{Offset: 222, Size: 10})
@@ -290,7 +290,6 @@ func TestIndexPutPrevAndNextKeyCommonPrefix(t *testing.T) {
 	key2 := []byte{1, 2, 3, 4, 5, 6, 7, 8, 9, 10}
 	key3 := []byte{1, 2, 3, 4, 5, 6, 9, 8, 8, 8}
 
-	const bucketBits uint8 = 24
 	primaryStorage := inmemory.NewInmemory([][2][]byte{
 		{key1, {0x10}},
 		{key2, {0x20}},
@@ -298,7 +297,7 @@ func TestIndexPutPrevAndNextKeyCommonPrefix(t *testing.T) {
 	})
 	tempDir := t.TempDir()
 	indexPath := filepath.Join(tempDir, "storethehash.index")
-	i, err := OpenIndex(indexPath, primaryStorage, bucketBits, 0)
+	i, err := OpenIndex(indexPath, primaryStorage, bucketBits, fileSize, 0)
 	require.NoError(t, err)
 	err = i.Put(key1, types.Block{Offset: 0, Size: 1})
 	require.NoError(t, err)
@@ -341,11 +340,10 @@ func TestIndexPutPrevAndNextKeyCommonPrefix(t *testing.T) {
 
 func TestIndexGetEmptyIndex(t *testing.T) {
 	key := []byte{1, 2, 3, 4, 5, 6, 9, 9, 9, 9}
-	const bucketBits uint8 = 24
 	primaryStorage := inmemory.NewInmemory([][2][]byte{})
 	tempDir := t.TempDir()
 	indexPath := filepath.Join(tempDir, "storethehash.index")
-	index, err := OpenIndex(indexPath, primaryStorage, bucketBits, 0)
+	index, err := OpenIndex(indexPath, primaryStorage, bucketBits, fileSize, 0)
 	require.NoError(t, err)
 	_, found, err := index.Get(key)
 	require.NoError(t, err)
@@ -359,7 +357,6 @@ func TestIndexGet(t *testing.T) {
 	key2 := []byte{1, 2, 3, 4, 5, 6, 7, 8, 9, 10}
 	key3 := []byte{1, 2, 3, 4, 5, 6, 9, 8, 8, 8}
 
-	const bucketBits uint8 = 24
 	primaryStorage := inmemory.NewInmemory([][2][]byte{
 		{key1, {0x10}},
 		{key2, {0x20}},
@@ -367,7 +364,7 @@ func TestIndexGet(t *testing.T) {
 	})
 	tempDir := t.TempDir()
 	indexPath := filepath.Join(tempDir, "storethehash.index")
-	i, err := OpenIndex(indexPath, primaryStorage, bucketBits, 0)
+	i, err := OpenIndex(indexPath, primaryStorage, bucketBits, fileSize, 0)
 	require.NoError(t, err)
 	err = i.Put(key1, types.Block{Offset: 0, Size: 1})
 	require.NoError(t, err)
@@ -434,7 +431,7 @@ func TestIndexGet(t *testing.T) {
 
 	err = i.Close()
 	require.NoError(t, err)
-	i, err = OpenIndex(indexPath, primaryStorage, bucketBits, 0)
+	i, err = OpenIndex(indexPath, primaryStorage, bucketBits, fileSize, 0)
 	require.NoError(t, err)
 
 	// same should hold true when index is closed and reopened
@@ -459,18 +456,17 @@ func TestIndexGet(t *testing.T) {
 }
 
 func TestIndexHeader(t *testing.T) {
-	const bucketBits uint8 = 24
 	tempDir := t.TempDir()
 	indexPath := filepath.Join(tempDir, "storethehash.index")
 
 	primaryStorage := inmemory.NewInmemory([][2][]byte{})
-	i1, err := OpenIndex(indexPath, primaryStorage, bucketBits, 0)
+	i1, err := OpenIndex(indexPath, primaryStorage, bucketBits, fileSize, 0)
 	require.NoError(t, err)
 	t.Cleanup(func() { i1.Close() })
 	assertHeader(t, i1.headerPath, bucketBits)
 
 	// Check that the header doesn't change if the index is opened again.
-	i2, err := OpenIndex(indexPath, inmemory.NewInmemory([][2][]byte{}), bucketBits, 0)
+	i2, err := OpenIndex(indexPath, inmemory.NewInmemory([][2][]byte{}), bucketBits, fileSize, 0)
 	require.NoError(t, err)
 	t.Cleanup(func() { i2.Close() })
 	assertHeader(t, i2.headerPath, bucketBits)
@@ -482,7 +478,6 @@ func TestIndexGetBad(t *testing.T) {
 	key3 := []byte{1, 2, 3, 4, 5, 6, 9, 8, 8, 8}
 	key4 := []byte{1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11}
 
-	const bucketBits uint8 = 24
 	primaryStorage := inmemory.NewInmemory([][2][]byte{
 		{key1, {0x10}},
 		{[]byte("X"), {0x20}},
@@ -491,7 +486,7 @@ func TestIndexGetBad(t *testing.T) {
 
 	tempDir := t.TempDir()
 	indexPath := filepath.Join(tempDir, "storethehash.index")
-	i, err := OpenIndex(indexPath, primaryStorage, bucketBits, 0)
+	i, err := OpenIndex(indexPath, primaryStorage, bucketBits, 0, 0)
 
 	require.NoError(t, err)
 	err = i.Put(key1, types.Block{Offset: 0, Size: 1})

@@ -14,14 +14,8 @@ import (
 
 var log = logging.Logger("storethehash/index")
 
-// Checkpoint is the last bucket index still in use by first file.
-var (
-	hasCheckpoint    bool
-	lastBucketPrefix BucketIndex
-)
-
-// garbageCollector is a goroutine that runs periodically, to search for and
-// remove stale index files.  It runs every gcInterval, if there have been any
+// garbageCollector is a goroutine that runs periodically to search for and
+// remove stale index files. It runs every gcInterval, if there have been any
 // index updates.
 func (i *Index) garbageCollector(gcInterval time.Duration) {
 	defer close(i.gcDone)
@@ -78,7 +72,8 @@ func (i *Index) garbageCollector(gcInterval time.Duration) {
 	}
 }
 
-// gc searches for and removes stale index files. Returns the number of files removed.
+// gc searches for and removes stale index files. Returns the number of unused
+// index files that were removed.
 func (i *Index) gc(ctx context.Context) (int, error) {
 	header, err := readHeader(i.headerPath)
 	if err != nil {
@@ -88,10 +83,10 @@ func (i *Index) gc(ctx context.Context) (int, error) {
 
 	// Before scanning the index files, check if the first index file is still
 	// in use by the bucket index last seen using it.
-	if hasCheckpoint {
-		inUse, err := i.bucketInFile(lastBucketPrefix, fileNum)
+	if i.gcCheckpoint {
+		inUse, err := i.bucketInFile(i.gcBucketIndex, fileNum)
 		if err != nil {
-			hasCheckpoint = false
+			i.gcCheckpoint = false
 			return 0, err
 		}
 		if inUse {
@@ -99,7 +94,7 @@ func (i *Index) gc(ctx context.Context) (int, error) {
 			return 0, nil
 		}
 		// Checkpoint bucket checked.
-		hasCheckpoint = false
+		i.gcCheckpoint = false
 	}
 
 	var count int
@@ -134,9 +129,8 @@ func (i *Index) gc(ctx context.Context) (int, error) {
 }
 
 // gcIndexFile scans a single index file, checking if any of the entries are in
-// buckets that use this file.  If no buckets are using this file for any of
-// the entries, then there are no more active entries and the file can be
-// deleted.
+// buckets that use this file. If no buckets are using this file for any of the
+// entries, then there are no more active entries and the file can be deleted.
 func (i *Index) gcIndexFile(ctx context.Context, fileNum uint32, indexPath string) (bool, error) {
 	file, err := openFileForScan(indexPath)
 	if err != nil {
@@ -179,8 +173,8 @@ func (i *Index) gcIndexFile(ctx context.Context, fileNum uint32, indexPath strin
 		}
 		if inUse {
 			// This index file is in use by the bucket, so no GC for this file.
-			hasCheckpoint = true
-			lastBucketPrefix = bucketPrefix
+			i.gcCheckpoint = true
+			i.gcBucketIndex = bucketPrefix
 			return false, nil
 		}
 	}
@@ -195,7 +189,7 @@ func (i *Index) bucketInFile(bucketPrefix BucketIndex, fileNum uint32) (bool, er
 	if err != nil {
 		return false, err
 	}
-	ok, fnum := bucketPosToFileNum(bucketPos)
+	ok, fnum := bucketPosToFileNum(bucketPos, i.maxFileSize)
 	if ok && fnum == fileNum {
 		return true, nil
 	}

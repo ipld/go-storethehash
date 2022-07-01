@@ -29,31 +29,31 @@ The format of that append only log is:
 */
 
 // In-memory buckets are used to track the location of records within the index
-// files. The buckets map a bit-prefix to a bucketPos value.  The bucketPos
-// encodes both the index file number and the record offset within that
-// file. If 1GiB is the maximum size for a file, then the local data offset is
-// kept in the first GiB worth of bits (30) of the bucketPos.  The file number
-// is kept in the bits above that.  It is necessary for the file number to wrap
+// files. The buckets map a bit-prefix to a bucketPos value. The bucketPos
+// encodes both the index file number and the record offset within that file.
+// If 1GiB is the maximum size for a file, then the local data offset is kept
+// in the first GiB worth of bits (30) of the bucketPos. The file number is
+// kept in the bits above that. It is necessary for the file number to wrap
 // before it reaches a value greater than the number of bits available to
-// record it in the buckerPos.  This results in a trade-off between allowing
+// record it in the buckerPos. This results in a trade-off between allowing
 // larger files or allowing more files, but with the same overall maximum
 // storage.
 //
 // With a 1GiB local offset taking the first 30 bits of a 64 bit number, that
-// leaves 34 bits left to encode the file number.  Instead of having logic to
+// leaves 34 bits left to encode the file number. Instead of having logic to
 // wrap the file number at the largest value allowed by the available bits, the
 // file number is represented as a 32-bit value that always wraps at 2^32.
 //
 // Since the file number wraps 2^32 this means there can never be more than
-// 2^32 active index files.  This also means that maxFileSize should never be
-// greater than 2^32.  Using a maxFileSize of 2^30, the default, and a 32-bit
-// file number, results in 2 bits unused in the bucketPos address space.  With
-// a smaller maxFileSize more bits would be unused.
+// 2^32 active index files. This also means that maxFileSize should never be
+// greater than 2^32. Using a maxFileSize of 2^30, the default, and a 32-bit
+// file number, results in 2 bits unused in the bucketPos address space. With a
+// smaller maxFileSize more bits would be unused.
 //
-// Smaller values for maxFileSize result in more files needed to hold
-// the index, but also more granular GC.  A value too small risks running out
-// of inodes on the file system, and a value too large means that there is more
-// stale data that GC cannot remove.  Using a 1GiB index file size limit offers
+// Smaller values for maxFileSize result in more files needed to hold the
+// index, but also more granular GC. A value too small risks running out of
+// inodes on the file system, and a value too large means that there is more
+// stale data that GC cannot remove. Using a 1GiB index file size limit offers
 // a good balance, and this value should not be changed (other than for
 // testing) by more than a factor of 4.
 
@@ -62,8 +62,11 @@ const (
 	// index data.
 	IndexVersion = 3
 
-	// maxFileSize is the size at which a new index file must be started.
-	maxFileSize = 1024 * 1024 * 1024
+	// defaultIndexSizeBits is the default number of bits in an index prefix.
+	defaultIndexSizeBits = uint8(24)
+
+	// defaultMaxFileSize is the default size at which to start a new file.
+	defaultMaxFileSize = 1024 * 1024 * 1024
 
 	// sizePrefixSize is the number of bytes used for the size prefix of a
 	// record list.
@@ -91,7 +94,7 @@ func stripBucketPrefix(key []byte, bits byte) []byte {
 	return key[prefixLen:]
 }
 
-// Header contains information about the index.  This is actually stored in a
+// Header contains information about the index. This is actually stored in a
 // separate ".info" file, but is the first file read when the index is opened.
 type Header struct {
 	// A version number in case we change the header
@@ -105,7 +108,7 @@ type Header struct {
 	FirstFile uint32
 }
 
-func newHeader(bucketsBits byte) Header {
+func newHeader(bucketsBits byte, maxFileSize uint32) Header {
 	return Header{
 		Version:     IndexVersion,
 		BucketsBits: bucketsBits,
@@ -115,6 +118,7 @@ func newHeader(bucketsBits byte) Header {
 
 type Index struct {
 	sizeBits          uint8
+	maxFileSize       uint32
 	buckets           Buckets
 	sizeBuckets       SizeBuckets
 	file              *os.File
@@ -128,19 +132,33 @@ type Index struct {
 	length            types.Position
 	basePath          string
 	updateSig         chan struct{}
-	gcDone            chan struct{}
+
+	gcDone chan struct{}
+	// Checkpoint is the last bucket index still in use by first file.
+	gcCheckpoint  bool
+	gcBucketIndex BucketIndex
 }
 
 type bucketPool map[BucketIndex][]byte
 
-// Open and index.
+// OpenIndex opens the index for the given primary. The index is created if
+// there is no existing index at the specified path. If there is an older
+// version index, then it is automatically upgraded.
 //
-// It is created if there is no existing index at that path.
-func OpenIndex(path string, primary primary.PrimaryStorage, indexSizeBits uint8, gcInterval time.Duration) (*Index, error) {
+// Specifying 0 for indexSizeBits and maxFileSize results in using their
+// default values. A gcInterval of 0 disables garbage collection.
+func OpenIndex(path string, primary primary.PrimaryStorage, indexSizeBits uint8, maxFileSize uint32, gcInterval time.Duration) (*Index, error) {
 	var file *os.File
 	headerPath := filepath.Clean(path) + ".info"
 
-	err := upgradeIndex(path, headerPath)
+	if indexSizeBits == 0 {
+		indexSizeBits = defaultIndexSizeBits
+	}
+	if maxFileSize == 0 {
+		maxFileSize = defaultMaxFileSize
+	}
+
+	err := upgradeIndex(path, headerPath, maxFileSize)
 	if err != nil {
 		return nil, err
 	}
@@ -157,7 +175,7 @@ func OpenIndex(path string, primary primary.PrimaryStorage, indexSizeBits uint8,
 	var lastIndexNum uint32
 	header, err := readHeader(headerPath)
 	if os.IsNotExist(err) {
-		header = newHeader(indexSizeBits)
+		header = newHeader(indexSizeBits, maxFileSize)
 		if err = writeHeader(headerPath, header); err != nil {
 			return nil, err
 		}
@@ -174,7 +192,7 @@ func OpenIndex(path string, primary primary.PrimaryStorage, indexSizeBits uint8,
 			return nil, types.ErrIndexWrongFileSize{header.MaxFileSize, maxFileSize}
 		}
 
-		lastIndexNum, err = scanIndex(path, header.FirstFile, buckets, sizeBuckets)
+		lastIndexNum, err = scanIndex(path, header.FirstFile, buckets, sizeBuckets, maxFileSize)
 		if err != nil {
 			return nil, err
 		}
@@ -192,6 +210,7 @@ func OpenIndex(path string, primary primary.PrimaryStorage, indexSizeBits uint8,
 
 	idx := &Index{
 		sizeBits:    indexSizeBits,
+		maxFileSize: maxFileSize,
 		buckets:     buckets,
 		sizeBuckets: sizeBuckets,
 		file:        file,
@@ -221,10 +240,10 @@ func indexFileName(basePath string, fileNum uint32) string {
 	return fmt.Sprintf("%s.%d", basePath, fileNum)
 }
 
-func scanIndex(basePath string, fileNum uint32, buckets Buckets, sizeBuckets SizeBuckets) (uint32, error) {
+func scanIndex(basePath string, fileNum uint32, buckets Buckets, sizeBuckets SizeBuckets, maxFileSize uint32) (uint32, error) {
 	var lastFileNum uint32
 	for {
-		err := scanIndexFile(basePath, fileNum, buckets, sizeBuckets)
+		err := scanIndexFile(basePath, fileNum, buckets, sizeBuckets, maxFileSize)
 		if err != nil {
 			if os.IsNotExist(err) {
 				break
@@ -237,6 +256,7 @@ func scanIndex(basePath string, fileNum uint32, buckets Buckets, sizeBuckets Siz
 	return lastFileNum, nil
 }
 
+// StorageSize returns bytes of storage used by the index and freelist files.
 func (i *Index) StorageSize() (int64, error) {
 	header, err := readHeader(i.headerPath)
 	if err != nil {
@@ -276,7 +296,7 @@ func (i *Index) StorageSize() (int64, error) {
 	return size, nil
 }
 
-func scanIndexFile(basePath string, fileNum uint32, buckets Buckets, sizeBuckets SizeBuckets) error {
+func scanIndexFile(basePath string, fileNum uint32, buckets Buckets, sizeBuckets SizeBuckets, maxFileSize uint32) error {
 	indexPath := indexFileName(basePath, fileNum)
 
 	// This is a single sequential read across the index file.
@@ -328,7 +348,7 @@ func scanIndexFile(basePath string, fileNum uint32, buckets Buckets, sizeBuckets
 		}
 
 		bucketPrefix := BucketIndex(binary.LittleEndian.Uint32(data))
-		err = buckets.Put(bucketPrefix, localPosToBucketPos(pos, fileNum))
+		err = buckets.Put(bucketPrefix, localPosToBucketPos(pos, fileNum, maxFileSize))
 		if err != nil {
 			return err
 		}
@@ -497,7 +517,7 @@ func (i *Index) Put(key []byte, location types.Block) error {
 	return nil
 }
 
-// Update a key together with a file offset into the index.
+// Update updates a key together with a file offset into the index.
 func (i *Index) Update(key []byte, location types.Block) error {
 	// Get record list and bucket index
 	bucket, err := i.getBucketIndex(key)
@@ -536,7 +556,7 @@ func (i *Index) Update(key []byte, location types.Block) error {
 	return nil
 }
 
-// Remove a key from index
+// Remove removes a key from the index.
 func (i *Index) Remove(key []byte) (bool, error) {
 	// Get record list and bucket index
 	bucket, err := i.getBucketIndex(key)
@@ -569,7 +589,7 @@ func (i *Index) Remove(key []byte) (bool, error) {
 		return false, nil
 	}
 
-	// Remove key from record
+	// Remove key from record.
 	newData = records.PutKeys([]KeyPositionPair{}, r.Pos, r.NextPos())
 	// NOTE: We are removing the key without changing any keys. If we want
 	// to optimize for storage we need to check the keys with the same prefix
@@ -613,15 +633,15 @@ func (i *Index) getRecordsFromBucket(bucket BucketIndex) (RecordList, error) {
 }
 
 func (i *Index) flushBucket(bucket BucketIndex, newData []byte) (types.Block, types.Work, error) {
-	if i.length >= maxFileSize {
+	if i.length >= types.Position(i.maxFileSize) {
 		fileNum := i.fileNum + 1
 		indexPath := indexFileName(i.basePath, fileNum)
 		// If the index file being opened already exists then fileNum has
-		// wrapped and there are 4GiB of index files.  This means that
+		// wrapped and there are max uint32 of index files. This means that
 		// maxFileSize is set far too small or GC is disabled.
 		if _, err := os.Stat(indexPath); !os.IsNotExist(err) {
 			log.Warnw("Creating index file overwrites existing. Check that file size limit is not too small resulting in too many files.",
-				"maxFileSize", maxFileSize, "indexPath", indexPath)
+				"maxFileSize", i.maxFileSize, "indexPath", indexPath)
 		}
 		file, err := openFileAppend(indexPath)
 		if err != nil {
@@ -663,7 +683,7 @@ func (i *Index) flushBucket(bucket BucketIndex, newData []byte) (types.Block, ty
 
 	// Keep the reference to the stored data in the bucket.
 	return types.Block{
-		Offset: localPosToBucketPos(int64(length+sizePrefixSize), i.fileNum),
+		Offset: localPosToBucketPos(int64(length+sizePrefixSize), i.fileNum, i.maxFileSize),
 		Size:   types.Size(len(newData) + BucketPrefixSize),
 	}, types.Work(toWrite), nil
 }
@@ -690,7 +710,7 @@ func (i *Index) readBucketInfo(bucket BucketIndex) ([]byte, types.Position, type
 	if err != nil {
 		return nil, 0, 0, 0, fmt.Errorf("error reading size bucket: %w", err)
 	}
-	localPos, fileNum := localizeBucketPos(bucketPos)
+	localPos, fileNum := localizeBucketPos(bucketPos, i.maxFileSize)
 	return nil, localPos, recordListSize, fileNum, nil
 }
 
@@ -973,7 +993,7 @@ func openFileForScan(name string) (*os.File, error) {
 	return os.OpenFile(name, os.O_RDONLY, 0644)
 }
 
-func bucketPosToFileNum(pos types.Position) (bool, uint32) {
+func bucketPosToFileNum(pos types.Position, maxFileSize uint32) (bool, uint32) {
 	// Bucket pos 0 means there is no data in the bucket, so indicate empty bucket.
 	if pos == 0 {
 		return false, 0
@@ -982,27 +1002,27 @@ func bucketPosToFileNum(pos types.Position) (bool, uint32) {
 	// is file is used.  The record begins sizePrefixSize before pos.  This
 	// matters only if pos is slightly after a maxFileSize boundry, but
 	// the adjusted position is not.
-	return true, uint32((pos - sizePrefixSize) / maxFileSize)
+	return true, uint32((pos - sizePrefixSize) / types.Position(maxFileSize))
 }
 
-func localPosToBucketPos(pos int64, fileNum uint32) types.Position {
+func localPosToBucketPos(pos int64, fileNum, maxFileSize uint32) types.Position {
 	// Valid position must be non-zero, at least sizePrefixSize.
 	if pos == 0 {
 		panic("invalid local offset")
 	}
 	// fileNum is a 32bit value and will wrap at 4GiB, So 4294967296 is the
 	// maximum number of index files possible.
-	return types.Position(fileNum)*maxFileSize + types.Position(pos)
+	return types.Position(fileNum)*types.Position(maxFileSize) + types.Position(pos)
 }
 
 // localizeBucketPos decodes a bucketPos into a local pos and file number.
-func localizeBucketPos(pos types.Position) (types.Position, uint32) {
-	ok, fileNum := bucketPosToFileNum(pos)
+func localizeBucketPos(pos types.Position, maxFileSize uint32) (types.Position, uint32) {
+	ok, fileNum := bucketPosToFileNum(pos, maxFileSize)
 	if !ok {
 		// Return 0 local pos to indicate empty bucket.
 		return 0, 0
 	}
 	// Subtract file offset to get pos within its local file.
-	localPos := pos - (types.Position(fileNum) * maxFileSize)
+	localPos := pos - (types.Position(fileNum) * types.Position(maxFileSize))
 	return localPos, fileNum
 }

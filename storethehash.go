@@ -28,12 +28,14 @@ type HashedBlockstore struct {
 }
 
 const defaultIndexSizeBits = uint8(24)
+const defaultIndexFileSize = uint32(1024 * 1024 * 1024)
 const defaultBurstRate = 4 * 1024 * 1024
 const defaultSyncInterval = time.Second
 const defaultGCInterval = 30 * time.Minute
 
 type configOptions struct {
 	indexSizeBits uint8
+	indexFileSize uint32
 	syncInterval  time.Duration
 	burstRate     types.Work
 	gcInterval    time.Duration
@@ -44,6 +46,12 @@ type Option func(*configOptions)
 func IndexBitSize(indexBitSize uint8) Option {
 	return func(co *configOptions) {
 		co.indexSizeBits = indexBitSize
+	}
+}
+
+func IndexFileSize(indexFileSize uint32) Option {
+	return func(co *configOptions) {
+		co.indexFileSize = indexFileSize
 	}
 }
 
@@ -69,6 +77,7 @@ func GCInterval(gcInterval time.Duration) Option {
 func OpenHashedBlockstore(indexPath string, dataPath string, options ...Option) (*HashedBlockstore, error) {
 	co := configOptions{
 		indexSizeBits: defaultIndexSizeBits,
+		indexFileSize: defaultIndexFileSize,
 		syncInterval:  defaultSyncInterval,
 		burstRate:     defaultBurstRate,
 		gcInterval:    defaultGCInterval,
@@ -80,7 +89,7 @@ func OpenHashedBlockstore(indexPath string, dataPath string, options ...Option) 
 	if err != nil {
 		return nil, err
 	}
-	store, err := store.OpenStore(indexPath, primary, co.indexSizeBits, co.syncInterval, co.burstRate, co.gcInterval, true)
+	store, err := store.OpenStore(indexPath, primary, co.indexSizeBits, co.indexFileSize, co.syncInterval, co.burstRate, co.gcInterval, true)
 	if err != nil {
 		return nil, err
 	}
