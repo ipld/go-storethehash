@@ -10,7 +10,7 @@ import (
 	"github.com/ipld/go-storethehash/store/types"
 )
 
-func upgradeIndex(name, headerPath string) error {
+func upgradeIndex(name, headerPath string, maxFileSize uint32) error {
 	inFile, err := os.Open(name)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -28,13 +28,13 @@ func upgradeIndex(name, headerPath string) error {
 		return fmt.Errorf("cannot convert unknown header version: %d", version)
 	}
 
-	fileNum, err := chunkOldIndex(inFile, name, maxFileSize)
+	fileNum, err := chunkOldIndex(inFile, name, int64(maxFileSize))
 	if err != nil {
 		return err
 	}
 	inFile.Close()
 
-	if err = writeHeader(headerPath, newHeader(bucketBits)); err != nil {
+	if err = writeHeader(headerPath, newHeader(bucketBits, maxFileSize)); err != nil {
 		return err
 	}
 
