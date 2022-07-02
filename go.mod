@@ -4,10 +4,11 @@ go 1.17
 
 require (
 	github.com/ipfs/go-block-format v0.0.3
-	github.com/ipfs/go-cid v0.1.0
-	github.com/ipfs/go-ipfs-blockstore v1.0.4-0.20210205083733-fb07d7bc5aec
+	github.com/ipfs/go-cid v0.2.0
+	github.com/ipfs/go-ipfs-blockstore v1.2.0
 	github.com/ipfs/go-ipfs-blocksutil v0.0.1
 	github.com/ipfs/go-ipfs-util v0.0.2
+	github.com/ipfs/go-ipld-format v0.3.0
 	github.com/ipfs/go-log/v2 v2.5.1
 	github.com/multiformats/go-multihash v0.1.0
 	github.com/stretchr/testify v1.7.1
@@ -19,11 +20,11 @@ require (
 	github.com/google/uuid v1.1.1 // indirect
 	github.com/hashicorp/golang-lru v0.5.4 // indirect
 	github.com/ipfs/bbloom v0.0.4 // indirect
-	github.com/ipfs/go-datastore v0.4.2 // indirect
-	github.com/ipfs/go-ipfs-ds-help v1.0.0 // indirect
+	github.com/ipfs/go-datastore v0.5.0 // indirect
+	github.com/ipfs/go-ipfs-ds-help v1.1.0 // indirect
 	github.com/ipfs/go-log v0.0.1 // indirect
 	github.com/ipfs/go-metrics-interface v0.0.1 // indirect
-	github.com/jbenet/goprocess v0.1.3 // indirect
+	github.com/jbenet/goprocess v0.1.4 // indirect
 	github.com/klauspost/cpuid/v2 v2.0.9 // indirect
 	github.com/mattn/go-colorable v0.1.2 // indirect
 	github.com/mattn/go-isatty v0.0.14 // indirect
