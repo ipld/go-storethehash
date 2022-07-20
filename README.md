@@ -10,11 +10,11 @@ go-storethehash is a `golang` port of [vmx/storethehash](https://github.com/vmx/
 
 ## How it Works
 
-Store-the-hash consists of four distinct pieces. The in-memory buckets, the on-disk index, the primary storage, and the freelist.
+go-storethehash consists of four distinct pieces. The in-memory buckets, the on-disk index, the primary storage, and the freelist.
 
 ### Buckets
 
-The buckets are an in-memory data structure that maps small byte ranges (at most 4) to file offsets in the index file. An instance of Store-the-hash is bound to a specific number of bits (at most 32) that are used to determine to which bucket a key belongs to. If you e.g. decide to use 24-bits, then there will be 2^24 = 16m buckets. As file offsets are stored as 64-bit integers the buckets will consume at least 128MiB of memory.
+The buckets are an in-memory data structure that maps small byte ranges (at most 4) to file offsets in the index file. An instance of storethehash is bound to a specific number of bits (at most 32) that are used to determine to which bucket a key belongs to. If you e.g. decide to use 24-bits, then there will be 2^24 = 16m buckets. As file offsets are stored as 64-bit integers the buckets will consume at least 128MiB of memory.
 
 When a new key is inserted, the first few bits (24 in this example) will be used to map it to a bucket. The bytes are interpreted as little-endian. From a key like `[0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07]` we would take the first 3 bytes `[0x00, 0x01, 0x02]` and convert into a 32-bit integer it would be `131328` (`0x020100`). So the file offset of the index would be stored in a bucket at position `131328`.
 
@@ -23,7 +23,7 @@ When a new key is inserted, the first few bits (24 in this example) will be used
 
 The index is an append-only log that maps keys to offsets in the primary storage. Updates are always appended, there are no in-place updates. The index consists of so-called record lists. There is one record list per bucket. Such a list contains all keys that are mapped to one specific bucket.
 
-The index is split across multiple files on disk. By default, each of these files may reach a maximum size of approcimately 1GiB. When all record lists in an index file are no longer referenced by any file offsets in the Bucket, that index file can be deleted.  These unused index files are removed, in order, by the index garbage collector.  
+The index is split across multiple files on disk. By default, each of these files may reach a maximum size of approximately 1GiB. When all record lists in an index file are no longer referenced by any file offsets in the Bucket, that index file can be deleted.  These unused index files are removed, in order, by the index garbage collector.  
 
 #### Record list
 
