@@ -2,6 +2,7 @@ package index
 
 import (
 	"bufio"
+	"context"
 	"encoding/binary"
 	"fmt"
 	"io"
@@ -10,7 +11,10 @@ import (
 	"github.com/ipld/go-storethehash/store/types"
 )
 
-func upgradeIndex(name, headerPath string, maxFileSize uint32) error {
+func upgradeIndex(ctx context.Context, name, headerPath string, maxFileSize uint32) error {
+	if ctx.Err() != nil {
+		return ctx.Err()
+	}
 	inFile, err := os.Open(name)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -28,7 +32,7 @@ func upgradeIndex(name, headerPath string, maxFileSize uint32) error {
 		return fmt.Errorf("cannot convert unknown header version: %d", version)
 	}
 
-	fileNum, err := chunkOldIndex(inFile, name, int64(maxFileSize))
+	fileNum, err := chunkOldIndex(ctx, inFile, name, int64(maxFileSize))
 	if err != nil {
 		return err
 	}
@@ -65,7 +69,7 @@ func readOldHeader(file *os.File) (byte, byte, types.Position, error) {
 	return version, bucketBits, types.Position(sizePrefixSize + headerSize), nil
 }
 
-func chunkOldIndex(file *os.File, name string, fileSizeLimit int64) (uint32, error) {
+func chunkOldIndex(ctx context.Context, file *os.File, name string, fileSizeLimit int64) (uint32, error) {
 	var fileNum uint32
 	outName := indexFileName(name, fileNum)
 	outFile, err := createFileAppend(outName)
@@ -106,6 +110,9 @@ func chunkOldIndex(file *os.File, name string, fileSizeLimit int64) (uint32, err
 				return 0, err
 			}
 			outFile.Close()
+			if ctx.Err() != nil {
+				return 0, ctx.Err()
+			}
 			log.Infof("Upgrade created index file %s", outName)
 			fileNum++
 			outName = indexFileName(name, fileNum)

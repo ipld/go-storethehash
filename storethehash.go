@@ -75,7 +75,7 @@ func GCInterval(gcInterval time.Duration) Option {
 }
 
 // OpenHashedBlockstore opens a HashedBlockstore with the default index size
-func OpenHashedBlockstore(indexPath string, dataPath string, options ...Option) (*HashedBlockstore, error) {
+func OpenHashedBlockstore(ctx context.Context, indexPath string, dataPath string, options ...Option) (*HashedBlockstore, error) {
 	co := configOptions{
 		indexSizeBits: defaultIndexSizeBits,
 		indexFileSize: defaultIndexFileSize,
@@ -90,7 +90,7 @@ func OpenHashedBlockstore(indexPath string, dataPath string, options ...Option) 
 	if err != nil {
 		return nil, err
 	}
-	store, err := store.OpenStore(indexPath, primary, co.indexSizeBits, co.indexFileSize, co.syncInterval, co.burstRate, co.gcInterval, true)
+	store, err := store.OpenStore(ctx, indexPath, primary, co.indexSizeBits, co.indexFileSize, co.syncInterval, co.burstRate, co.gcInterval, true)
 	if err != nil {
 		return nil, err
 	}

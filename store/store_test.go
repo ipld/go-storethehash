@@ -1,6 +1,7 @@
 package store_test
 
 import (
+	"context"
 	"crypto/rand"
 	"io"
 	"os"
@@ -31,7 +32,7 @@ func initStore(t *testing.T, dir string, immutable bool) (*store.Store, error) {
 	if err != nil {
 		return nil, err
 	}
-	store, err := store.OpenStore(indexPath, primary, defaultIndexSizeBits, defaultIndexFileSize, defaultSyncInterval, defaultBurstRate, defaultGCInterval, immutable)
+	store, err := store.OpenStore(context.Background(), indexPath, primary, defaultIndexSizeBits, defaultIndexFileSize, defaultSyncInterval, defaultBurstRate, defaultGCInterval, immutable)
 	if err != nil {
 		_ = primary.Close()
 		return nil, err
@@ -238,7 +239,7 @@ func TestRecoverBadKey(t *testing.T) {
 	dataPath := filepath.Join(tmpDir, "storethehash.data")
 	primary, err := cidprimary.OpenCIDPrimary(dataPath)
 	require.NoError(t, err)
-	s, err := store.OpenStore(indexPath, primary, defaultIndexSizeBits, defaultIndexFileSize, defaultSyncInterval, defaultBurstRate, defaultGCInterval, false)
+	s, err := store.OpenStore(context.Background(), indexPath, primary, defaultIndexSizeBits, defaultIndexFileSize, defaultSyncInterval, defaultBurstRate, defaultGCInterval, false)
 	require.NoError(t, err)
 
 	t.Logf("Putting blocks")
@@ -254,7 +255,7 @@ func TestRecoverBadKey(t *testing.T) {
 	// Open store again.
 	primary, err = cidprimary.OpenCIDPrimary(dataPath)
 	require.NoError(t, err)
-	s, err = store.OpenStore(indexPath, primary, defaultIndexSizeBits, defaultIndexFileSize, defaultSyncInterval, defaultBurstRate, defaultGCInterval, false)
+	s, err = store.OpenStore(context.Background(), indexPath, primary, defaultIndexSizeBits, defaultIndexFileSize, defaultSyncInterval, defaultBurstRate, defaultGCInterval, false)
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, s.Close()) })
 
