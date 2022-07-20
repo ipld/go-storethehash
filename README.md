@@ -1,12 +1,18 @@
 # go-storethehash
+[![](https://img.shields.io/badge/made%20by-Protocol%20Labs-blue.svg?style=flat-square)](https://protocol.ai)
+[![Go Reference](https://pkg.go.dev/badge/github.com/ipld/go-storethehash.svg)](https://pkg.go.dev/github.com/ipld/go-storethehash)
+[![Coverage Status](https://codecov.io/gh/ipld/go-storethehash/branch/main/graph/badge.svg)](https://codecov.io/gh/ipld/go-storethehash/branch/main)
+> Storage for hashes, targeted at content addressable systems
 
-This is a storage for hashes. Targeted at content addressable systems.
-
-go-storethehash is primarily an index, though it also includes some basic primary storage implementations as well, so that it can be used as a full key-value store.
+go-storethehash is primarily an index that also includes basic primary storage implementations, so that it can be used as a full key-value store.
 
 This was originally ported from go port of [vmx/storethehash](https://github.com/vmx/storethehash#readme)
 
-go-storethehash is a `golang` port of [vmx/storethehash](https://github.com/vmx/storethehash#readme)
+## Uses
+
+go-storethehash's [HashedBlockstore](https://pkg.go.dev/github.com/ipld/go-storethehash#HashedBlockstore) provides a go-ipfs-blockstore implementation.
+
+The network indexer [storetheindex](https://github.com/filecoin-project/storetheindex) uses go-storethehash's [Store](https://pkg.go.dev/github.com/ipld/go-storethehash@v0.1.8/store) with the [multihash primary](https://pkg.go.dev/github.com/ipld/go-storethehash@v0.1.8/store/primary/multihash) as its storage for index data.
 
 ## How it Works
 
@@ -17,7 +23,6 @@ go-storethehash consists of four distinct pieces. The in-memory buckets, the on-
 The buckets are an in-memory data structure that maps small byte ranges (at most 4) to file offsets in the index file. An instance of storethehash is bound to a specific number of bits (at most 32) that are used to determine to which bucket a key belongs to. If you e.g. decide to use 24-bits, then there will be 2^24 = 16m buckets. As file offsets are stored as 64-bit integers the buckets will consume at least 128MiB of memory.
 
 When a new key is inserted, the first few bits (24 in this example) will be used to map it to a bucket. The bytes are interpreted as little-endian. From a key like `[0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07]` we would take the first 3 bytes `[0x00, 0x01, 0x02]` and convert into a 32-bit integer it would be `131328` (`0x020100`). So the file offset of the index would be stored in a bucket at position `131328`.
-
 
 ### Index
 
