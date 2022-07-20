@@ -12,7 +12,7 @@ This was originally ported from go port of [vmx/storethehash](https://github.com
 
 go-storethehash's [HashedBlockstore](https://pkg.go.dev/github.com/ipld/go-storethehash#HashedBlockstore) provides a go-ipfs-blockstore implementation.
 
-The network indexer [storetheindex](https://github.com/filecoin-project/storetheindex) uses go-storethehash's [Store](https://pkg.go.dev/github.com/ipld/go-storethehash@v0.1.8/store) with the [multihash primary](https://pkg.go.dev/github.com/ipld/go-storethehash@v0.1.8/store/primary/multihash) as its storage for index data.
+The network indexer [storetheindex](https://github.com/filecoin-project/storetheindex) uses go-storethehash's [Store](https://pkg.go.dev/github.com/ipld/go-storethehash/store) with the [multihash primary](https://pkg.go.dev/github.com/ipld/go-storethehash/store/primary/multihash) as its storage for index data.
 
 ## How it Works
 
