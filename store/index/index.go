@@ -251,7 +251,7 @@ func scanIndex(ctx context.Context, basePath string, fileNum uint32, buckets Buc
 		if ctx.Err() != nil {
 			return 0, ctx.Err()
 		}
-		err := scanIndexFile(basePath, fileNum, buckets, sizeBuckets, maxFileSize)
+		err := scanIndexFile(ctx, basePath, fileNum, buckets, sizeBuckets, maxFileSize)
 		if err != nil {
 			if os.IsNotExist(err) {
 				break
@@ -304,7 +304,7 @@ func (i *Index) StorageSize() (int64, error) {
 	return size, nil
 }
 
-func scanIndexFile(basePath string, fileNum uint32, buckets Buckets, sizeBuckets SizeBuckets, maxFileSize uint32) error {
+func scanIndexFile(ctx context.Context, basePath string, fileNum uint32, buckets Buckets, sizeBuckets SizeBuckets, maxFileSize uint32) error {
 	indexPath := indexFileName(basePath, fileNum)
 
 	// This is a single sequential read across the index file.
@@ -317,7 +317,7 @@ func scanIndexFile(basePath string, fileNum uint32, buckets Buckets, sizeBuckets
 	buffered := bufio.NewReaderSize(file, indexBufferSize)
 	sizeBuffer := make([]byte, sizePrefixSize)
 	scratch := make([]byte, 256)
-	var iterPos int64
+	var iterPos, i int64
 	for {
 		_, err = io.ReadFull(buffered, sizeBuffer)
 		if err != nil {
@@ -353,6 +353,11 @@ func scanIndexFile(basePath string, fileNum uint32, buckets Buckets, sizeBuckets
 				break
 			}
 			return err
+		}
+
+		i++
+		if i%1024 == 0 && ctx.Err() != nil {
+			return ctx.Err()
 		}
 
 		bucketPrefix := BucketIndex(binary.LittleEndian.Uint32(data))
