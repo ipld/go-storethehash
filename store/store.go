@@ -2,6 +2,7 @@ package store
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"math"
 	"sync"
@@ -44,8 +45,8 @@ type Store struct {
 //
 // Specifying 0 for indexSizeBits and indexFileSize results in using their
 // default values. A gcInterval of 0 disables garbage collection.
-func OpenStore(path string, primary primary.PrimaryStorage, indexSizeBits uint8, indexFileSize uint32, syncInterval time.Duration, burstRate types.Work, gcInterval time.Duration, immutable bool) (*Store, error) {
-	index, err := index.OpenIndex(path, primary, indexSizeBits, indexFileSize, gcInterval)
+func OpenStore(ctx context.Context, path string, primary primary.PrimaryStorage, indexSizeBits uint8, indexFileSize uint32, syncInterval time.Duration, burstRate types.Work, gcInterval time.Duration, immutable bool) (*Store, error) {
+	index, err := index.OpenIndex(ctx, path, primary, indexSizeBits, indexFileSize, gcInterval)
 	if err != nil {
 		return nil, err
 	}

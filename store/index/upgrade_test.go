@@ -2,6 +2,7 @@ package index
 
 import (
 	"bufio"
+	"context"
 	"encoding/binary"
 	"errors"
 	"io"
@@ -58,7 +59,7 @@ func TestChunkOldIndex(t *testing.T) {
 
 	// Do the upgrade to split the index into multiple files.
 	t.Log("Chunking old index into new index files")
-	lastChunkNum, err := chunkOldIndex(oldFile, newIndexPath, testFileSizeLimit)
+	lastChunkNum, err := chunkOldIndex(context.Background(), oldFile, newIndexPath, testFileSizeLimit)
 	require.NoError(t, err)
 	t.Logf("Split old index into %d files", lastChunkNum)
 

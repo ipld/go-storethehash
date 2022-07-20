@@ -25,7 +25,7 @@ func TestGC(t *testing.T) {
 	require.NoError(t, err)
 	defer primary.Close()
 
-	idx, err := OpenIndex(indexPath, primary, 24, 1024, 0)
+	idx, err := OpenIndex(context.Background(), indexPath, primary, 24, 1024, 0)
 	require.NoError(t, err)
 	defer idx.Close()
 
@@ -44,7 +44,7 @@ func TestGC(t *testing.T) {
 	require.NoError(t, err)
 
 	// Open the index with the duplicated files.
-	idx, err = OpenIndex(indexPath, primary, 24, 1024, 0)
+	idx, err = OpenIndex(context.Background(), indexPath, primary, 24, 1024, 0)
 	require.NoError(t, err)
 	defer idx.Close()
 

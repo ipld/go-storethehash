@@ -3,6 +3,7 @@ package index
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"encoding/binary"
 	"encoding/json"
 	"fmt"
@@ -147,7 +148,7 @@ type bucketPool map[BucketIndex][]byte
 //
 // Specifying 0 for indexSizeBits and maxFileSize results in using their
 // default values. A gcInterval of 0 disables garbage collection.
-func OpenIndex(path string, primary primary.PrimaryStorage, indexSizeBits uint8, maxFileSize uint32, gcInterval time.Duration) (*Index, error) {
+func OpenIndex(ctx context.Context, path string, primary primary.PrimaryStorage, indexSizeBits uint8, maxFileSize uint32, gcInterval time.Duration) (*Index, error) {
 	var file *os.File
 	headerPath := filepath.Clean(path) + ".info"
 
@@ -158,7 +159,7 @@ func OpenIndex(path string, primary primary.PrimaryStorage, indexSizeBits uint8,
 		maxFileSize = defaultMaxFileSize
 	}
 
-	err := upgradeIndex(path, headerPath, maxFileSize)
+	err := upgradeIndex(ctx, path, headerPath, maxFileSize)
 	if err != nil {
 		return nil, err
 	}
@@ -192,10 +193,14 @@ func OpenIndex(path string, primary primary.PrimaryStorage, indexSizeBits uint8,
 			return nil, types.ErrIndexWrongFileSize{header.MaxFileSize, maxFileSize}
 		}
 
-		lastIndexNum, err = scanIndex(path, header.FirstFile, buckets, sizeBuckets, maxFileSize)
+		lastIndexNum, err = scanIndex(ctx, path, header.FirstFile, buckets, sizeBuckets, maxFileSize)
 		if err != nil {
 			return nil, err
 		}
+	}
+
+	if ctx.Err() != nil {
+		return nil, ctx.Err()
 	}
 
 	file, err = openFileAppend(indexFileName(path, lastIndexNum))
@@ -240,9 +245,12 @@ func indexFileName(basePath string, fileNum uint32) string {
 	return fmt.Sprintf("%s.%d", basePath, fileNum)
 }
 
-func scanIndex(basePath string, fileNum uint32, buckets Buckets, sizeBuckets SizeBuckets, maxFileSize uint32) (uint32, error) {
+func scanIndex(ctx context.Context, basePath string, fileNum uint32, buckets Buckets, sizeBuckets SizeBuckets, maxFileSize uint32) (uint32, error) {
 	var lastFileNum uint32
 	for {
+		if ctx.Err() != nil {
+			return 0, ctx.Err()
+		}
 		err := scanIndexFile(basePath, fileNum, buckets, sizeBuckets, maxFileSize)
 		if err != nil {
 			if os.IsNotExist(err) {
