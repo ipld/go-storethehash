@@ -14,11 +14,11 @@ const CIDSizePrefix = 4
 
 // A primary storage that is CID aware.
 type FreeList struct {
-	file              *os.File
-	writer            *bufio.Writer
-	outstandingWork   types.Work
-	curPool, nextPool blockPool
-	poolLk            sync.RWMutex
+	file            *os.File
+	writer          *bufio.Writer
+	outstandingWork types.Work
+	blockPool       []types.Block
+	poolLk          sync.RWMutex
 }
 
 const (
@@ -29,33 +29,22 @@ const (
 	blockPoolSize = 1024
 )
 
-type blockPool struct {
-	blocks []types.Block
-}
-
-func newBlockPool() blockPool {
-	return blockPool{
-		blocks: make([]types.Block, 0, blockPoolSize),
-	}
-}
-
 func OpenFreeList(path string) (*FreeList, error) {
 	file, err := os.OpenFile(path, os.O_RDWR|os.O_APPEND|os.O_CREATE, 0o644)
 	if err != nil {
 		return nil, err
 	}
 	return &FreeList{
-		file:     file,
-		writer:   bufio.NewWriterSize(file, blockBufferSize),
-		curPool:  newBlockPool(),
-		nextPool: newBlockPool(),
+		file:      file,
+		writer:    bufio.NewWriterSize(file, blockBufferSize),
+		blockPool: make([]types.Block, 0, blockPoolSize),
 	}, nil
 }
 
 func (cp *FreeList) Put(blk types.Block) error {
 	cp.poolLk.Lock()
 	defer cp.poolLk.Unlock()
-	cp.nextPool.blocks = append(cp.nextPool.blocks, blk)
+	cp.blockPool = append(cp.blockPool, blk)
 	// Offset = 8bytes + Size = 4bytes = 12 Bytes
 	cp.outstandingWork += types.Work(types.SizeBytesLen + types.OffBytesLen)
 	return nil
@@ -80,16 +69,17 @@ func (cp *FreeList) flushBlock(blk types.Block) (types.Work, error) {
 // Flush writes outstanding work and buffered data to the freelist file.
 func (cp *FreeList) Flush() (types.Work, error) {
 	cp.poolLk.Lock()
-	nextPool := cp.curPool
-	cp.curPool = cp.nextPool
-	cp.nextPool = nextPool
-	cp.outstandingWork = 0
-	cp.poolLk.Unlock()
-	if len(cp.curPool.blocks) == 0 {
+	if len(cp.blockPool) == 0 {
+		cp.poolLk.Unlock()
 		return 0, nil
 	}
+	blocks := cp.blockPool
+	cp.blockPool = make([]types.Block, 0, blockPoolSize)
+	cp.outstandingWork = 0
+	cp.poolLk.Unlock()
+
 	var work types.Work
-	for _, record := range cp.curPool.blocks {
+	for _, record := range blocks {
 		blockWork, err := cp.flushBlock(record)
 		if err != nil {
 			return 0, err
@@ -110,9 +100,6 @@ func (cp *FreeList) Sync() error {
 	if err := cp.file.Sync(); err != nil {
 		return err
 	}
-	cp.poolLk.Lock()
-	defer cp.poolLk.Unlock()
-	cp.curPool = newBlockPool()
 	return nil
 }
 
@@ -132,6 +119,7 @@ func (cp *FreeList) OutstandingWork() types.Work {
 	defer cp.poolLk.RUnlock()
 	return cp.outstandingWork
 }
+
 func (cp *FreeList) Iter() (*FreeListIter, error) {
 	return NewFreeListIter(cp.file), nil
 }

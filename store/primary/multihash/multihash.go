@@ -24,6 +24,7 @@ type MultihashPrimary struct {
 	outstandingWork   types.Work
 	curPool, nextPool blockPool
 	poolLk            sync.RWMutex
+	flushLock         sync.RWMutex
 }
 
 const (
@@ -173,6 +174,13 @@ func (cp *MultihashPrimary) GetIndexKey(blk types.Block) ([]byte, error) {
 
 // Flush writes outstanding work and buffered data to the primary file.
 func (cp *MultihashPrimary) Flush() (types.Work, error) {
+	// Only one Flush at a time, otherwise the 2nd Flush can swap the pools
+	// while the 1st Flush is still reading the pool being flushed. That could
+	// cause the pool being read by the 1st Flush to be written to
+	// concurrently.
+	cp.flushLock.Lock()
+	defer cp.flushLock.Unlock()
+
 	cp.poolLk.Lock()
 	cp.curPool, cp.nextPool = cp.nextPool, cp.curPool
 	cp.outstandingWork = 0
@@ -193,19 +201,20 @@ func (cp *MultihashPrimary) Flush() (types.Work, error) {
 		return 0, fmt.Errorf("cannot flush data to primary file %s: %w", cp.file.Name(), err)
 	}
 
+	// Reset the pool that was just flushed, so that a subsequent Flush does
+	// not re-flush the items in this pool. This is necessary since the items
+	// may by out-of-date if newer items are in the other pool.
+	cp.poolLk.Lock()
+	cp.curPool = newBlockPool()
+	cp.poolLk.Unlock()
+
 	return work, nil
 }
 
 // Sync commits the contents of the primary file to disk. Flush should be
 // called before calling Sync.
 func (cp *MultihashPrimary) Sync() error {
-	if err := cp.file.Sync(); err != nil {
-		return err
-	}
-	cp.poolLk.Lock()
-	defer cp.poolLk.Unlock()
-	cp.curPool = newBlockPool()
-	return nil
+	return cp.file.Sync()
 }
 
 // Close calls Flush to write work and data to the primary file, and then
