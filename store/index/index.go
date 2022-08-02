@@ -128,7 +128,7 @@ type Index struct {
 	writer            *bufio.Writer
 	Primary           primary.PrimaryStorage
 	bucketLk          sync.RWMutex
-	flushLock         sync.RWMutex
+	flushLock         sync.Mutex
 	outstandingWork   types.Work
 	curPool, nextPool bucketPool
 	length            types.Position
@@ -798,12 +798,16 @@ func (i *Index) Flush() (types.Work, error) {
 	defer i.flushLock.Unlock()
 
 	i.bucketLk.Lock()
-	i.curPool, i.nextPool = i.nextPool, i.curPool
-	i.outstandingWork = 0
-	i.bucketLk.Unlock()
-	if len(i.curPool) == 0 {
+	// If no new data, then nothing to do.
+	if len(i.nextPool) == 0 {
+		i.bucketLk.Unlock()
 		return 0, nil
 	}
+	i.curPool = i.nextPool
+	i.nextPool = make(bucketPool, bucketPoolSize)
+	i.outstandingWork = 0
+	i.bucketLk.Unlock()
+
 	blks := make([]bucketBlock, 0, len(i.curPool))
 	var work types.Work
 	for bucket, data := range i.curPool {
@@ -829,10 +833,6 @@ func (i *Index) Flush() (types.Work, error) {
 			return 0, fmt.Errorf("error commiting size bucket: %w", err)
 		}
 	}
-
-	// Reset the pool that was just flushed, so that a subsequent Flush does
-	// not need to re-flush the items in this pool.
-	i.curPool = make(bucketPool, bucketPoolSize)
 
 	if i.updateSig != nil {
 		// Send signal to tell GC there are updates.

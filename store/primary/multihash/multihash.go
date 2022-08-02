@@ -24,7 +24,7 @@ type MultihashPrimary struct {
 	outstandingWork   types.Work
 	curPool, nextPool blockPool
 	poolLk            sync.RWMutex
-	flushLock         sync.RWMutex
+	flushLock         sync.Mutex
 }
 
 const (
@@ -182,12 +182,16 @@ func (cp *MultihashPrimary) Flush() (types.Work, error) {
 	defer cp.flushLock.Unlock()
 
 	cp.poolLk.Lock()
-	cp.curPool, cp.nextPool = cp.nextPool, cp.curPool
-	cp.outstandingWork = 0
-	cp.poolLk.Unlock()
-	if len(cp.curPool.blocks) == 0 {
+	// If no new data, then nothing to do.
+	if len(cp.nextPool.blocks) == 0 {
+		cp.poolLk.Unlock()
 		return 0, nil
 	}
+	cp.curPool = cp.nextPool
+	cp.nextPool = newBlockPool()
+	cp.outstandingWork = 0
+	cp.poolLk.Unlock()
+
 	var work types.Work
 	for _, record := range cp.curPool.blocks {
 		blockWork, err := cp.flushBlock(record.key, record.value)
@@ -200,13 +204,6 @@ func (cp *MultihashPrimary) Flush() (types.Work, error) {
 	if err != nil {
 		return 0, fmt.Errorf("cannot flush data to primary file %s: %w", cp.file.Name(), err)
 	}
-
-	// Reset the pool that was just flushed, so that a subsequent Flush does
-	// not re-flush the items in this pool. This is necessary since the items
-	// may by out-of-date if newer items are in the other pool.
-	cp.poolLk.Lock()
-	cp.curPool = newBlockPool()
-	cp.poolLk.Unlock()
 
 	return work, nil
 }
