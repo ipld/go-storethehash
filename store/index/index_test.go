@@ -530,3 +530,41 @@ func TestIndexGetBad(t *testing.T) {
 	err = i.Close()
 	require.NoError(t, err)
 }
+
+func TestFlushRace(t *testing.T) {
+	const goroutines = 64
+	key1 := []byte{1, 2, 3, 4, 5, 6, 9, 9, 9, 9}
+	key2 := []byte{1, 2, 3, 4, 5, 6, 7, 8, 9, 10}
+	key3 := []byte{1, 2, 3, 4, 5, 6, 9, 8, 8, 8}
+
+	primaryStorage := inmemory.NewInmemory([][2][]byte{
+		{key1, {0x10}},
+		{key2, {0x20}},
+		{key3, {0x30}},
+	})
+	tempDir := t.TempDir()
+	indexPath := filepath.Join(tempDir, "storethehash.index")
+	i, err := OpenIndex(context.Background(), indexPath, primaryStorage, bucketBits, fileSize, 0)
+	require.NoError(t, err)
+	err = i.Put(key1, types.Block{Offset: 0, Size: 1})
+	require.NoError(t, err)
+	err = i.Put(key2, types.Block{Offset: 1, Size: 1})
+	require.NoError(t, err)
+	err = i.Put(key3, types.Block{Offset: 2, Size: 1})
+	require.NoError(t, err)
+
+	start := make(chan struct{})
+	errs := make(chan error)
+	for n := 0; n < goroutines; n++ {
+		go func() {
+			<-start
+			_, err := i.Flush()
+			errs <- err
+		}()
+	}
+	close(start)
+	for n := 0; n < goroutines; n++ {
+		err := <-errs
+		require.NoError(t, err)
+	}
+}
