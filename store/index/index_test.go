@@ -572,7 +572,6 @@ func TestFlushRace(t *testing.T) {
 }
 
 func TestFlushExcess(t *testing.T) {
-	const goroutines = 64
 	key1 := []byte{1, 2, 3, 4, 5, 6, 9, 9, 9, 9}
 	key2 := []byte{1, 2, 3, 4, 5, 6, 7, 8, 9, 10}
 	key3 := []byte{1, 2, 3, 4, 5, 6, 9, 8, 8, 8}

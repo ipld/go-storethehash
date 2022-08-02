@@ -163,7 +163,6 @@ func TestFlushRace(t *testing.T) {
 }
 
 func TestFlushExcess(t *testing.T) {
-	const goroutines = 64
 	tempDir := t.TempDir()
 	primaryPath := filepath.Join(tempDir, "storethehash.primary")
 	primaryStorage, err := cidprimary.OpenCIDPrimary(primaryPath)
