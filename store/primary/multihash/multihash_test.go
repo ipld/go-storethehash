@@ -127,3 +127,35 @@ func TestIndexGet(t *testing.T) {
 	err = primaryStorage.Close()
 	require.NoError(t, err)
 }
+
+func TestFlushRace(t *testing.T) {
+	const goroutines = 64
+	tempDir := t.TempDir()
+	primaryPath := filepath.Join(tempDir, "storethehash.primary")
+	primaryStorage, err := mhprimary.OpenMultihashPrimary(primaryPath)
+	require.NoError(t, err)
+
+	// load blocks
+	blks := testutil.GenerateBlocksOfSize(5, 100)
+	var locs []types.Block
+	for _, blk := range blks {
+		loc, err := primaryStorage.Put(blk.Cid().Hash(), blk.RawData())
+		require.NoError(t, err)
+		locs = append(locs, loc)
+	}
+
+	start := make(chan struct{})
+	errs := make(chan error)
+	for n := 0; n < goroutines; n++ {
+		go func() {
+			<-start
+			_, err := primaryStorage.Flush()
+			errs <- err
+		}()
+	}
+	close(start)
+	for n := 0; n < goroutines; n++ {
+		err := <-errs
+		require.NoError(t, err)
+	}
+}
