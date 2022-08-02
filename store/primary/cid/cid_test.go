@@ -161,3 +161,39 @@ func TestFlushRace(t *testing.T) {
 
 	require.NoError(t, primaryStorage.Close())
 }
+
+func TestFlushExcess(t *testing.T) {
+	const goroutines = 64
+	tempDir := t.TempDir()
+	primaryPath := filepath.Join(tempDir, "storethehash.primary")
+	primaryStorage, err := cidprimary.OpenCIDPrimary(primaryPath)
+	require.NoError(t, err)
+
+	// load blocks
+	blks := testutil.GenerateBlocksOfSize(5, 100)
+	for _, blk := range blks {
+		_, err := primaryStorage.Put(blk.Cid().Hash(), blk.RawData())
+		require.NoError(t, err)
+	}
+
+	work, err := primaryStorage.Flush()
+	require.NoError(t, err)
+	require.NotZero(t, work)
+
+	blks = testutil.GenerateBlocksOfSize(5, 100)
+	for _, blk := range blks {
+		_, err := primaryStorage.Put(blk.Cid().Hash(), blk.RawData())
+		require.NoError(t, err)
+	}
+
+	work, err = primaryStorage.Flush()
+	require.NoError(t, err)
+	require.NotZero(t, work)
+
+	// Another flush with no new data should not do work.
+	work, err = primaryStorage.Flush()
+	require.NoError(t, err)
+	require.Zero(t, work)
+
+	require.NoError(t, primaryStorage.Close())
+}
