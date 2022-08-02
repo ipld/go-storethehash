@@ -129,3 +129,70 @@ func TestIndexGet(t *testing.T) {
 	err = primaryStorage.Close()
 	require.NoError(t, err)
 }
+
+func TestFlushRace(t *testing.T) {
+	const goroutines = 64
+	tempDir := t.TempDir()
+	primaryPath := filepath.Join(tempDir, "storethehash.primary")
+	primaryStorage, err := cidprimary.OpenCIDPrimary(primaryPath)
+	require.NoError(t, err)
+
+	// load blocks
+	blks := testutil.GenerateBlocksOfSize(5, 100)
+	for _, blk := range blks {
+		_, err := primaryStorage.Put(blk.Cid().Bytes(), blk.RawData())
+		require.NoError(t, err)
+	}
+
+	start := make(chan struct{})
+	errs := make(chan error)
+	for n := 0; n < goroutines; n++ {
+		go func() {
+			<-start
+			_, err := primaryStorage.Flush()
+			errs <- err
+		}()
+	}
+	close(start)
+	for n := 0; n < goroutines; n++ {
+		err := <-errs
+		require.NoError(t, err)
+	}
+
+	require.NoError(t, primaryStorage.Close())
+}
+
+func TestFlushExcess(t *testing.T) {
+	tempDir := t.TempDir()
+	primaryPath := filepath.Join(tempDir, "storethehash.primary")
+	primaryStorage, err := cidprimary.OpenCIDPrimary(primaryPath)
+	require.NoError(t, err)
+
+	// load blocks
+	blks := testutil.GenerateBlocksOfSize(5, 100)
+	for _, blk := range blks {
+		_, err := primaryStorage.Put(blk.Cid().Hash(), blk.RawData())
+		require.NoError(t, err)
+	}
+
+	work, err := primaryStorage.Flush()
+	require.NoError(t, err)
+	require.NotZero(t, work)
+
+	blks = testutil.GenerateBlocksOfSize(5, 100)
+	for _, blk := range blks {
+		_, err := primaryStorage.Put(blk.Cid().Hash(), blk.RawData())
+		require.NoError(t, err)
+	}
+
+	work, err = primaryStorage.Flush()
+	require.NoError(t, err)
+	require.NotZero(t, work)
+
+	// Another flush with no new data should not do work.
+	work, err = primaryStorage.Flush()
+	require.NoError(t, err)
+	require.Zero(t, work)
+
+	require.NoError(t, primaryStorage.Close())
+}

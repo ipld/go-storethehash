@@ -59,7 +59,7 @@ The format of that append only log is:
 // testing) by more than a factor of 4.
 
 const (
-	// IndexVersion is stored in the header data to indicate how to interpred
+	// IndexVersion is stored in the header data to indicate how to interpret
 	// index data.
 	IndexVersion = 3
 
@@ -128,6 +128,7 @@ type Index struct {
 	writer            *bufio.Writer
 	Primary           primary.PrimaryStorage
 	bucketLk          sync.RWMutex
+	flushLock         sync.Mutex
 	outstandingWork   types.Work
 	curPool, nextPool bucketPool
 	length            types.Position
@@ -223,7 +224,6 @@ func OpenIndex(ctx context.Context, path string, primary primary.PrimaryStorage,
 		headerPath:  headerPath,
 		writer:      bufio.NewWriterSize(file, indexBufferSize),
 		Primary:     primary,
-		bucketLk:    sync.RWMutex{},
 		curPool:     make(bucketPool, bucketPoolSize),
 		nextPool:    make(bucketPool, bucketPoolSize),
 		length:      types.Position(fi.Size()),
@@ -328,7 +328,10 @@ func scanIndexFile(ctx context.Context, basePath string, fileNum uint32, buckets
 				log.Errorw("Unexpected EOF scanning index", "file", indexPath)
 				file.Close()
 				// Cut off incomplete data
-				os.Truncate(indexPath, iterPos)
+				e := os.Truncate(indexPath, iterPos)
+				if e != nil {
+					log.Errorw("Error truncating file", "err", e, "file", indexPath)
+				}
 				break
 			}
 			return err
@@ -349,7 +352,10 @@ func scanIndexFile(ctx context.Context, basePath string, fileNum uint32, buckets
 				log.Errorw("Unexpected EOF scanning index record", "file", indexPath)
 				file.Close()
 				// Cut off incomplete data
-				os.Truncate(indexPath, pos-sizePrefixSize)
+				e := os.Truncate(indexPath, pos-sizePrefixSize)
+				if e != nil {
+					log.Errorw("Error truncating file", "err", e, "file", indexPath)
+				}
 				break
 			}
 			return err
@@ -728,7 +734,7 @@ func (i *Index) readBucketInfo(bucket BucketIndex) ([]byte, types.Position, type
 }
 
 func (i *Index) readDiskBucket(indexOffset types.Position, recordListSize types.Size, fileNum uint32) (RecordList, error) {
-	// indexOffset should never be 0 is there is a bucket, because it is always
+	// indexOffset should never be 0 if there is a bucket, because it is always
 	// at lease sizePrefixSize into the stored data.
 	if indexOffset == 0 {
 		return nil, nil
@@ -790,13 +796,24 @@ func (i *Index) Get(key []byte) (types.Block, bool, error) {
 // Flush writes outstanding work and buffered data to the current index file
 // and updates buckets.
 func (i *Index) Flush() (types.Work, error) {
+	// Only one Flush at a time, otherwise the 2nd Flush can swap the pools
+	// while the 1st Flush is still reading the pool being flushed. That could
+	// cause the pool being read by the 1st Flush to be written to
+	// concurrently.
+	i.flushLock.Lock()
+	defer i.flushLock.Unlock()
+
 	i.bucketLk.Lock()
-	i.curPool, i.nextPool = i.nextPool, i.curPool
-	i.outstandingWork = 0
-	i.bucketLk.Unlock()
-	if len(i.curPool) == 0 {
+	// If no new data, then nothing to do.
+	if len(i.nextPool) == 0 {
+		i.bucketLk.Unlock()
 		return 0, nil
 	}
+	i.curPool = i.nextPool
+	i.nextPool = make(bucketPool, bucketPoolSize)
+	i.outstandingWork = 0
+	i.bucketLk.Unlock()
+
 	blks := make([]bucketBlock, 0, len(i.curPool))
 	var work types.Work
 	for bucket, data := range i.curPool {
@@ -837,13 +854,7 @@ func (i *Index) Flush() (types.Work, error) {
 // Sync commits the contents of the current index file to disk. Flush should be
 // called before calling Sync.
 func (i *Index) Sync() error {
-	if err := i.file.Sync(); err != nil {
-		return err
-	}
-	i.bucketLk.Lock()
-	i.curPool = make(bucketPool, bucketPoolSize)
-	i.bucketLk.Unlock()
-	return nil
+	return i.file.Sync()
 }
 
 // Close calls Flush to write work and data to the current index file, and then
@@ -904,26 +915,25 @@ func (iter *IndexIter) Next() ([]byte, types.Position, bool, error) {
 	}
 
 	size, err := readSizePrefix(iter.index)
-	switch err {
-	case nil:
-		pos := iter.pos + types.Position(sizePrefixSize)
-		iter.pos += types.Position(sizePrefixSize) + types.Position(size)
-		data := make([]byte, size)
-		_, err := io.ReadFull(iter.index, data)
-		if err != nil {
-			iter.index.Close()
-			return nil, 0, false, err
-		}
-		return data, pos, false, nil
-	case io.EOF:
+	if err != nil {
 		iter.index.Close()
-		iter.index = nil
-		iter.fileNum++
-		return iter.Next()
-	default:
+		if err == io.EOF {
+			iter.index = nil
+			iter.fileNum++
+			return iter.Next()
+		}
+		return nil, 0, false, err
+	}
+
+	pos := iter.pos + types.Position(sizePrefixSize)
+	iter.pos += types.Position(sizePrefixSize) + types.Position(size)
+	data := make([]byte, size)
+	_, err = io.ReadFull(iter.index, data)
+	if err != nil {
 		iter.index.Close()
 		return nil, 0, false, err
 	}
+	return data, pos, false, nil
 }
 
 func (iter *IndexIter) Close() error {

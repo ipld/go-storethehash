@@ -24,6 +24,7 @@ type CIDPrimary struct {
 	outstandingWork   types.Work
 	curPool, nextPool blockPool
 	poolLk            sync.RWMutex
+	flushLock         sync.Mutex
 }
 
 const blockBufferSize = 32 * 4096
@@ -163,13 +164,24 @@ func (cp *CIDPrimary) GetIndexKey(blk types.Block) ([]byte, error) {
 
 // Flush writes outstanding work and buffered data to the primary file.
 func (cp *CIDPrimary) Flush() (types.Work, error) {
+	// Only one Flush at a time, otherwise the 2nd Flush can swap the pools
+	// while the 1st Flush is still reading the pool being flushed. That could
+	// cause the pool being read by the 1st Flush to be written to
+	// concurrently.
+	cp.flushLock.Lock()
+	defer cp.flushLock.Unlock()
+
 	cp.poolLk.Lock()
-	cp.curPool, cp.nextPool = cp.nextPool, cp.curPool
-	cp.outstandingWork = 0
-	cp.poolLk.Unlock()
-	if len(cp.curPool.blocks) == 0 {
+	// If no new data, then nothing to do.
+	if len(cp.nextPool.blocks) == 0 {
+		cp.poolLk.Unlock()
 		return 0, nil
 	}
+	cp.curPool = cp.nextPool
+	cp.nextPool = newBlockPool()
+	cp.outstandingWork = 0
+	cp.poolLk.Unlock()
+
 	var work types.Work
 	for _, record := range cp.curPool.blocks {
 		blockWork, err := cp.flushBlock(record.key, record.value)
@@ -189,13 +201,7 @@ func (cp *CIDPrimary) Flush() (types.Work, error) {
 // Sync commits the contents of the primary file to disk. Flush should be
 // called before calling Sync.
 func (cp *CIDPrimary) Sync() error {
-	if err := cp.file.Sync(); err != nil {
-		return err
-	}
-	cp.poolLk.Lock()
-	defer cp.poolLk.Unlock()
-	cp.curPool = newBlockPool()
-	return nil
+	return cp.file.Sync()
 }
 
 // Close calls Flush to write work and data to the primary file, and then
