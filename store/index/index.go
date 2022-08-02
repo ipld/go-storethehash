@@ -328,7 +328,10 @@ func scanIndexFile(ctx context.Context, basePath string, fileNum uint32, buckets
 				log.Errorw("Unexpected EOF scanning index", "file", indexPath)
 				file.Close()
 				// Cut off incomplete data
-				os.Truncate(indexPath, iterPos)
+				e := os.Truncate(indexPath, iterPos)
+				if e != nil {
+					log.Errorw("Error truncating file", "err", e, "file", indexPath)
+				}
 				break
 			}
 			return err
@@ -349,7 +352,10 @@ func scanIndexFile(ctx context.Context, basePath string, fileNum uint32, buckets
 				log.Errorw("Unexpected EOF scanning index record", "file", indexPath)
 				file.Close()
 				// Cut off incomplete data
-				os.Truncate(indexPath, pos-sizePrefixSize)
+				e := os.Truncate(indexPath, pos-sizePrefixSize)
+				if e != nil {
+					log.Errorw("Error truncating file", "err", e, "file", indexPath)
+				}
 				break
 			}
 			return err

@@ -137,11 +137,9 @@ func TestFlushRace(t *testing.T) {
 
 	// load blocks
 	blks := testutil.GenerateBlocksOfSize(5, 100)
-	var locs []types.Block
 	for _, blk := range blks {
-		loc, err := primaryStorage.Put(blk.Cid().Hash(), blk.RawData())
+		_, err := primaryStorage.Put(blk.Cid().Hash(), blk.RawData())
 		require.NoError(t, err)
-		locs = append(locs, loc)
 	}
 
 	start := make(chan struct{})
