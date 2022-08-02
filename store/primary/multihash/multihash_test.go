@@ -158,4 +158,6 @@ func TestFlushRace(t *testing.T) {
 		err := <-errs
 		require.NoError(t, err)
 	}
+
+	require.NoError(t, primaryStorage.Close())
 }
