@@ -97,10 +97,7 @@ func (cp *FreeList) Flush() (types.Work, error) {
 // Sync commits the contents of the freelist file to disk. Flush should be
 // called before calling Sync.
 func (cp *FreeList) Sync() error {
-	if err := cp.file.Sync(); err != nil {
-		return err
-	}
-	return nil
+	return cp.file.Sync()
 }
 
 // Close calls Flush to write work and data to the freelist file, and then
