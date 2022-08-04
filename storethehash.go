@@ -86,7 +86,7 @@ func OpenHashedBlockstore(ctx context.Context, indexPath string, dataPath string
 	for _, option := range options {
 		option(&co)
 	}
-	primary, err := mhprimary.OpenMultihashPrimary(dataPath)
+	primary, err := mhprimary.OpenMultihashPrimary(dataPath, 0)
 	if err != nil {
 		return nil, err
 	}

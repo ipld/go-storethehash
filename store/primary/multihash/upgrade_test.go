@@ -31,7 +31,7 @@ func TestUpgradePrimary(t *testing.T) {
 	require.NoError(t, err)
 
 	// Return to beginning of old file.
-	_, err = oldFile.Seek(0, os.SEEK_SET)
+	_, err = oldFile.Seek(0, io.SeekStart)
 	require.NoError(t, err)
 
 	newPrimaryPath := filepath.Join(t.TempDir(), "storethehash.data")

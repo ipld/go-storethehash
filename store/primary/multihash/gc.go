@@ -182,7 +182,7 @@ func (gc *primaryGC) reapFile(ctx context.Context, fileNum uint32, primaryPath s
 
 	busyAt, ok := gc.busyAt[fileNum]
 	if ok {
-		_, err = file.Seek(busyAt, os.SEEK_SET)
+		_, err = file.Seek(busyAt, io.SeekStart)
 		if err != nil {
 			return false, err
 		}
