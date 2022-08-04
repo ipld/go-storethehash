@@ -348,37 +348,85 @@ func (cp *MultihashPrimary) OutstandingWork() types.Work {
 	defer cp.poolLk.RUnlock()
 	return cp.outstandingWork
 }
-func (cp *MultihashPrimary) Iter() (primary.PrimaryStorageIter, error) {
-	return NewMultihashPrimaryIter(cp.file), nil
-}
 
 type MultihashPrimaryIter struct {
-	reader io.Reader
-	pos    types.Position
+	// The index data we are iterating over
+	reader io.ReadCloser
+	// The current position within the index
+	pos types.Position
+	// The base index file path
+	base string
+	// The current index file number
+	fileNum uint32
 }
 
-func NewMultihashPrimaryIter(reader io.Reader) *MultihashPrimaryIter {
+func (cp *MultihashPrimary) Iter() (primary.PrimaryStorageIter, error) {
+	header, err := readHeader(cp.headerPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, err
+	}
+
+	return NewMultihashPrimaryIter(cp.basePath, header.FirstFile), nil
+}
+
+func NewMultihashPrimaryIter(basePath string, fileNum uint32) *MultihashPrimaryIter {
 	return &MultihashPrimaryIter{
-		reader: reader,
+		base:    basePath,
+		fileNum: fileNum,
 	}
 }
 
 func (iter *MultihashPrimaryIter) Next() ([]byte, []byte, error) {
+	if iter == nil {
+		return nil, nil, nil
+	}
+
+	if iter.reader == nil {
+		file, err := os.OpenFile(primaryFileName(iter.base, iter.fileNum), os.O_RDONLY, 0644)
+		if err != nil {
+			if os.IsNotExist(err) {
+				return nil, nil, io.EOF
+			}
+			return nil, nil, err
+		}
+		iter.reader = file
+		iter.pos = 0
+	}
+
 	size, err := readSizePrefix(iter.reader)
 	if err != nil {
+		iter.reader.Close()
+		if err == io.EOF {
+			iter.reader = nil
+			iter.fileNum++
+			return iter.Next()
+		}
 		return nil, nil, err
 	}
 
-	iter.pos += types.Position(sizePrefixSize) + types.Position(size)
 	data := make([]byte, size)
 	_, err = io.ReadFull(iter.reader, data)
 	if err != nil {
+		iter.reader.Close()
 		if err == io.EOF {
 			err = io.ErrUnexpectedEOF
 		}
 		return nil, nil, err
 	}
+
+	iter.pos += types.Position(sizePrefixSize) + types.Position(size)
+
 	return readNode(data)
+}
+
+func (iter *MultihashPrimaryIter) Close() error {
+	if iter.reader == nil {
+		return nil
+	}
+	return iter.reader.Close()
 }
 
 // StorageSize returns bytes of storage used by the primary files.
@@ -390,21 +438,11 @@ func (cp *MultihashPrimary) StorageSize() (int64, error) {
 		}
 		return 0, err
 	}
-	var size int64
 	fi, err := os.Stat(cp.headerPath)
 	if err != nil {
 		return 0, err
 	}
-	size += fi.Size()
-
-	fi, err = os.Stat(cp.basePath + ".free")
-	if err != nil {
-		if !os.IsNotExist(err) {
-			return 0, err
-		}
-	} else {
-		size += fi.Size()
-	}
+	size := fi.Size()
 
 	fileNum := header.FirstFile
 	for {
@@ -485,6 +523,7 @@ func localizePrimaryPos(pos types.Position, maxFileSize uint32) (types.Position,
 }
 
 func findLastPrimary(basePath string, fileNum uint32) (uint32, error) {
+	var lastFound uint32
 	for {
 		_, err := os.Stat(primaryFileName(basePath, fileNum))
 		if err != nil {
@@ -493,9 +532,10 @@ func findLastPrimary(basePath string, fileNum uint32) (uint32, error) {
 			}
 			return 0, err
 		}
+		lastFound = fileNum
 		fileNum++
 	}
-	return fileNum, nil
+	return lastFound, nil
 }
 
 func (mp *MultihashPrimary) ZeroRecord(pos types.Position, size types.Size) error {

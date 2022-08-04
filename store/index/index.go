@@ -256,21 +256,11 @@ func (i *Index) StorageSize() (int64, error) {
 		}
 		return 0, err
 	}
-	var size int64
 	fi, err := os.Stat(i.headerPath)
 	if err != nil {
 		return 0, err
 	}
-	size += fi.Size()
-
-	fi, err = os.Stat(i.basePath + ".free")
-	if err != nil {
-		if !os.IsNotExist(err) {
-			return 0, err
-		}
-	} else {
-		size += fi.Size()
-	}
+	size := fi.Size()
 
 	fileNum := header.FirstFile
 	for {
@@ -901,6 +891,9 @@ func (iter *IndexIter) Next() ([]byte, types.Position, bool, error) {
 	_, err = io.ReadFull(iter.index, data)
 	if err != nil {
 		iter.index.Close()
+		if err == io.EOF {
+			err = io.ErrUnexpectedEOF
+		}
 		return nil, 0, false, err
 	}
 	return data, pos, false, nil

@@ -2,7 +2,6 @@ package mhprimary_test
 
 import (
 	"io"
-	"os"
 	"path/filepath"
 	"testing"
 
@@ -43,11 +42,9 @@ func TestIndexPut(t *testing.T) {
 	err = primaryStorage.Sync()
 	require.NoError(t, err)
 
-	file, err := os.Open(primaryPath + ".0")
-	require.NoError(t, err)
-	t.Cleanup(func() { file.Close() })
+	iter := mhprimary.NewMultihashPrimaryIter(primaryPath, 0)
+	t.Cleanup(func() { iter.Close() })
 
-	iter := mhprimary.NewMultihashPrimaryIter(file)
 	for _, expectedBlk := range blks {
 		key, value, err := iter.Next()
 		require.NoError(t, err)
