@@ -182,6 +182,10 @@ func (cp *CIDPrimary) Flush() (types.Work, error) {
 	cp.outstandingWork = 0
 	cp.poolLk.Unlock()
 
+	// The pool lock is released allowing Put to write to nextPool. The
+	// flushLock is still held, preventing concurrent flushes from changing the
+	// pools or accessing writer.
+
 	var work types.Work
 	for _, record := range cp.curPool.blocks {
 		blockWork, err := cp.flushBlock(record.key, record.value)

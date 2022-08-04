@@ -186,8 +186,8 @@ func (cp *FreeList) Rotate() (string, error) {
 		return "", err
 	}
 
-	cp.poolLk.RLock()
-	defer cp.poolLk.RUnlock()
+	cp.flushLock.Lock()
+	defer cp.flushLock.Unlock()
 
 	cp.file.Close()
 	err = os.Rename(fileName, workFilePath)
