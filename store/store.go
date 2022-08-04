@@ -12,6 +12,7 @@ import (
 	"github.com/ipld/go-storethehash/store/freelist"
 	"github.com/ipld/go-storethehash/store/index"
 	"github.com/ipld/go-storethehash/store/primary"
+	mhprimary "github.com/ipld/go-storethehash/store/primary/multihash"
 	"github.com/ipld/go-storethehash/store/types"
 )
 
@@ -22,6 +23,9 @@ var log = logging.Logger("storethehash")
 type Store struct {
 	index    *index.Index
 	freelist *freelist.FreeList
+
+	indexGC   GC
+	primaryGC GC
 
 	stateLk sync.RWMutex
 	open    bool
@@ -40,13 +44,18 @@ type Store struct {
 	immutable    bool
 }
 
+type GC interface {
+	SignalUpdate()
+	Close()
+}
+
 // OpenStore opens the index and freelist and returns a Store with the given
 // primary.
 //
 // Specifying 0 for indexSizeBits and indexFileSize results in using their
 // default values. A gcInterval of 0 disables garbage collection.
 func OpenStore(ctx context.Context, path string, primary primary.PrimaryStorage, indexSizeBits uint8, indexFileSize uint32, syncInterval time.Duration, burstRate types.Work, gcInterval time.Duration, immutable bool) (*Store, error) {
-	index, err := index.OpenIndex(ctx, path, primary, indexSizeBits, indexFileSize, gcInterval)
+	idx, err := index.OpenIndex(ctx, path, primary, indexSizeBits, indexFileSize)
 	if err != nil {
 		return nil, err
 	}
@@ -54,9 +63,10 @@ func OpenStore(ctx context.Context, path string, primary primary.PrimaryStorage,
 	if err != nil {
 		return nil, err
 	}
+
 	store := &Store{
 		lastFlush:    time.Now(),
-		index:        index,
+		index:        idx,
 		freelist:     freelist,
 		open:         true,
 		running:      false,
@@ -67,6 +77,18 @@ func OpenStore(ctx context.Context, path string, primary primary.PrimaryStorage,
 		flushNow:     make(chan struct{}, 1),
 		immutable:    immutable,
 	}
+
+	if gcInterval == 0 {
+		log.Warn("Index and primary garbage collection disabled")
+	} else {
+		store.indexGC = index.NewGC(idx, gcInterval)
+
+		mp, ok := primary.(*mhprimary.MultihashPrimary)
+		if ok {
+			store.primaryGC = mhprimary.NewGC(mp, freelist, gcInterval, idx.Update)
+		}
+	}
+
 	return store, nil
 }
 
@@ -128,6 +150,13 @@ func (s *Store) Close() error {
 	}
 
 	cerr := s.Err()
+
+	if s.indexGC != nil {
+		s.indexGC.Close()
+	}
+	if s.primaryGC != nil {
+		s.primaryGC.Close()
+	}
 
 	err := s.index.Close()
 	if err != nil {
@@ -400,6 +429,15 @@ func (s *Store) commit() (types.Work, error) {
 	if err = s.freelist.Sync(); err != nil {
 		return 0, err
 	}
+
+	// Tell the index garbage collectors there may be some garbage.
+	if indexWork != 0 && s.indexGC != nil {
+		s.indexGC.SignalUpdate()
+	}
+	if flWork != 0 && s.primaryGC != nil {
+		s.primaryGC.SignalUpdate()
+	}
+
 	return primaryWork + indexWork + flWork, nil
 }
 
@@ -489,8 +527,34 @@ func (s *Store) GetSize(key []byte) (types.Size, bool, error) {
 	return blk.Size - types.Size(len(key)), true, nil
 }
 
-// IndexStorageSize returns the storage used by the index files. This includes
-// the `.info` file and the `.free` file and does not include primary storage.
+// IndexStorageSize returns the storage used by the index files.
 func (s *Store) IndexStorageSize() (int64, error) {
 	return s.index.StorageSize()
+}
+
+// PrimaryStorageSize returns the storage used by the primary storage files.
+func (s *Store) PrimaryStorageSize() (int64, error) {
+	return s.index.Primary.StorageSize()
+}
+
+// FreelistStorageSize returns the storage used by the freelist files.
+func (s *Store) FreelistStorageSize() (int64, error) {
+	return s.freelist.StorageSize()
+}
+
+// StorageSize returns the storage used by the index, primary, and freelist files.
+func (s *Store) StorageSize() (int64, error) {
+	isize, err := s.index.StorageSize()
+	if err != nil {
+		return 0, err
+	}
+	psize, err := s.index.Primary.StorageSize()
+	if err != nil {
+		return 0, err
+	}
+	fsize, err := s.freelist.StorageSize()
+	if err != nil {
+		return 0, err
+	}
+	return isize + psize + fsize, nil
 }

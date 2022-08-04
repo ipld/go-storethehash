@@ -14,11 +14,45 @@ import (
 
 var log = logging.Logger("storethehash/index")
 
-// garbageCollector is a goroutine that runs periodically to search for and
-// remove stale index files. It runs every gcInterval, if there have been any
-// index updates.
-func (i *Index) garbageCollector(gcInterval time.Duration) {
-	defer close(i.gcDone)
+type indexGC struct {
+	index     *Index
+	updateSig chan struct{}
+	done      chan struct{}
+
+	// Checkpoint is the last bucket index still in use by first file.
+	checkpoint  bool
+	bucketIndex BucketIndex
+}
+
+func NewGC(index *Index, gcInterval time.Duration) *indexGC {
+	igc := &indexGC{
+		index:     index,
+		updateSig: make(chan struct{}, 1),
+		done:      make(chan struct{}),
+	}
+
+	go igc.run(gcInterval)
+
+	return igc
+}
+
+func (gc *indexGC) SignalUpdate() {
+	// Send signal to tell GC there are updates.
+	select {
+	case gc.updateSig <- struct{}{}:
+	default:
+	}
+}
+
+func (gc *indexGC) Close() {
+	close(gc.updateSig)
+	<-gc.done
+}
+
+// run is a goroutine that runs periodically to search for and remove stale
+// index files. It runs every gcInterval, if there have been any index updates.
+func (gc *indexGC) run(gcInterval time.Duration) {
+	defer close(gc.done)
 
 	var gcDone chan struct{}
 	hasUpdate := true
@@ -31,7 +65,7 @@ func (i *Index) garbageCollector(gcInterval time.Duration) {
 
 	for {
 		select {
-		case _, ok := <-i.updateSig:
+		case _, ok := <-gc.updateSig:
 			if !ok {
 				// Channel closed; shutting down.
 				cancel()
@@ -52,7 +86,7 @@ func (i *Index) garbageCollector(gcInterval time.Duration) {
 			go func() {
 				defer close(gcDone)
 				log.Infow("GC started")
-				fileCount, err := i.gc(ctx)
+				fileCount, err := gc.cycle(ctx)
 				if err != nil {
 					log.Errorw("GC failed", "err", err)
 					return
@@ -72,10 +106,10 @@ func (i *Index) garbageCollector(gcInterval time.Duration) {
 	}
 }
 
-// gc searches for and removes stale index files. Returns the number of unused
-// index files that were removed.
-func (i *Index) gc(ctx context.Context) (int, error) {
-	header, err := readHeader(i.headerPath)
+// cycle searches for and removes stale index files. Returns the number of
+// unused index files that were removed.
+func (gc *indexGC) cycle(ctx context.Context) (int, error) {
+	header, err := readHeader(gc.index.headerPath)
 	if err != nil {
 		return 0, err
 	}
@@ -83,10 +117,10 @@ func (i *Index) gc(ctx context.Context) (int, error) {
 
 	// Before scanning the index files, check if the first index file is still
 	// in use by the bucket index last seen using it.
-	if i.gcCheckpoint {
-		inUse, err := i.bucketInFile(i.gcBucketIndex, fileNum)
+	if gc.checkpoint {
+		inUse, err := gc.bucketInFile(gc.bucketIndex, fileNum)
 		if err != nil {
-			i.gcCheckpoint = false
+			gc.checkpoint = false
 			return 0, err
 		}
 		if inUse {
@@ -94,17 +128,17 @@ func (i *Index) gc(ctx context.Context) (int, error) {
 			return 0, nil
 		}
 		// Checkpoint bucket checked.
-		i.gcCheckpoint = false
+		gc.checkpoint = false
 	}
 
 	var count int
 	for {
-		if fileNum == i.fileNum {
+		if fileNum == gc.index.fileNum {
 			// Do not try to GC the current index file.
 			break
 		}
-		indexPath := indexFileName(i.basePath, fileNum)
-		stale, err := i.gcIndexFile(ctx, fileNum, indexPath)
+		indexPath := indexFileName(gc.index.basePath, fileNum)
+		stale, err := gc.collectIndexFile(ctx, fileNum, indexPath)
 		if err != nil {
 			return 0, err
 		}
@@ -113,7 +147,7 @@ func (i *Index) gc(ctx context.Context) (int, error) {
 		}
 		fileNum++
 		header.FirstFile = fileNum
-		err = writeHeader(i.headerPath, header)
+		err = writeHeader(gc.index.headerPath, header)
 		if err != nil {
 			return 0, err
 		}
@@ -128,10 +162,11 @@ func (i *Index) gc(ctx context.Context) (int, error) {
 	return count, nil
 }
 
-// gcIndexFile scans a single index file, checking if any of the entries are in
-// buckets that use this file. If no buckets are using this file for any of the
-// entries, then there are no more active entries and the file can be deleted.
-func (i *Index) gcIndexFile(ctx context.Context, fileNum uint32, indexPath string) (bool, error) {
+// collectIndexFile scans a single index file, checking if any of the entries
+// are in buckets that use this file. If no buckets are using this file for any
+// of the entries, then there are no more active entries and the file can be
+// deleted.
+func (gc *indexGC) collectIndexFile(ctx context.Context, fileNum uint32, indexPath string) (bool, error) {
 	file, err := openFileForScan(indexPath)
 	if err != nil {
 		return false, err
@@ -167,14 +202,14 @@ func (i *Index) gcIndexFile(ctx context.Context, fileNum uint32, indexPath strin
 		}
 
 		bucketPrefix := BucketIndex(binary.LittleEndian.Uint32(data))
-		inUse, err := i.bucketInFile(bucketPrefix, fileNum)
+		inUse, err := gc.bucketInFile(bucketPrefix, fileNum)
 		if err != nil {
 			return false, err
 		}
 		if inUse {
 			// This index file is in use by the bucket, so no GC for this file.
-			i.gcCheckpoint = true
-			i.gcBucketIndex = bucketPrefix
+			gc.checkpoint = true
+			gc.bucketIndex = bucketPrefix
 			return false, nil
 		}
 	}
@@ -182,14 +217,14 @@ func (i *Index) gcIndexFile(ctx context.Context, fileNum uint32, indexPath strin
 	return true, nil
 }
 
-func (i *Index) bucketInFile(bucketPrefix BucketIndex, fileNum uint32) (bool, error) {
-	i.bucketLk.Lock()
-	bucketPos, err := i.buckets.Get(bucketPrefix)
-	i.bucketLk.Unlock()
+func (gc *indexGC) bucketInFile(bucketPrefix BucketIndex, fileNum uint32) (bool, error) {
+	gc.index.bucketLk.Lock()
+	bucketPos, err := gc.index.buckets.Get(bucketPrefix)
+	gc.index.bucketLk.Unlock()
 	if err != nil {
 		return false, err
 	}
-	ok, fnum := bucketPosToFileNum(bucketPos, i.maxFileSize)
+	ok, fnum := bucketPosToFileNum(bucketPos, gc.index.maxFileSize)
 	if ok && fnum == fileNum {
 		return true, nil
 	}

@@ -30,6 +30,8 @@ type PrimaryStorage interface {
 	Close() error
 	OutstandingWork() types.Work
 	Iter() (PrimaryStorageIter, error)
+
+	StorageSize() (int64, error)
 }
 
 type PrimaryStorageIter interface {

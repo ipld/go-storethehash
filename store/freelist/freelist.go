@@ -156,3 +156,50 @@ func (cpi *FreeListIter) Next() (*types.Block, error) {
 	size := binary.LittleEndian.Uint32(sizeBuf)
 	return &types.Block{Size: types.Size(size), Offset: types.Position(offset)}, nil
 }
+
+// StorageSize returns bytes of storage used by the freelist.
+func (fl *FreeList) StorageSize() (int64, error) {
+	fi, err := fl.file.Stat()
+	if err != nil {
+		if os.IsNotExist(err) {
+			return 0, nil
+		}
+		return 0, err
+	}
+
+	return fi.Size(), nil
+}
+
+func (cp *FreeList) Rotate() (string, error) {
+	fileName := cp.file.Name()
+	workFilePath := fileName + ".work"
+	_, err := os.Stat(workFilePath)
+	if !os.IsNotExist(err) {
+		if err != nil {
+			return "", err
+		}
+		return workFilePath, nil
+	}
+
+	_, err = cp.Flush()
+	if err != nil {
+		return "", err
+	}
+
+	cp.poolLk.RLock()
+	defer cp.poolLk.RUnlock()
+
+	cp.file.Close()
+	err = os.Rename(fileName, workFilePath)
+	if err != nil {
+		return "", err
+	}
+
+	cp.file, err = os.OpenFile(fileName, os.O_RDWR|os.O_APPEND|os.O_CREATE, 0o644)
+	if err != nil {
+		return "", err
+	}
+	cp.writer.Reset(cp.file)
+
+	return workFilePath, nil
+}

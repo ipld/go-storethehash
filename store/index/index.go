@@ -11,7 +11,6 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
-	"time"
 
 	"github.com/ipld/go-storethehash/store/primary"
 	"github.com/ipld/go-storethehash/store/types"
@@ -133,12 +132,6 @@ type Index struct {
 	curPool, nextPool bucketPool
 	length            types.Position
 	basePath          string
-	updateSig         chan struct{}
-
-	gcDone chan struct{}
-	// Checkpoint is the last bucket index still in use by first file.
-	gcCheckpoint  bool
-	gcBucketIndex BucketIndex
 }
 
 type bucketPool map[BucketIndex][]byte
@@ -148,8 +141,8 @@ type bucketPool map[BucketIndex][]byte
 // version index, then it is automatically upgraded.
 //
 // Specifying 0 for indexSizeBits and maxFileSize results in using their
-// default values. A gcInterval of 0 disables garbage collection.
-func OpenIndex(ctx context.Context, path string, primary primary.PrimaryStorage, indexSizeBits uint8, maxFileSize uint32, gcInterval time.Duration) (*Index, error) {
+// default values.
+func OpenIndex(ctx context.Context, path string, primary primary.PrimaryStorage, indexSizeBits uint8, maxFileSize uint32) (*Index, error) {
 	var file *os.File
 	headerPath := filepath.Clean(path) + ".info"
 
@@ -214,7 +207,7 @@ func OpenIndex(ctx context.Context, path string, primary primary.PrimaryStorage,
 		return nil, err
 	}
 
-	idx := &Index{
+	return &Index{
 		sizeBits:    indexSizeBits,
 		maxFileSize: maxFileSize,
 		buckets:     buckets,
@@ -228,17 +221,7 @@ func OpenIndex(ctx context.Context, path string, primary primary.PrimaryStorage,
 		nextPool:    make(bucketPool, bucketPoolSize),
 		length:      types.Position(fi.Size()),
 		basePath:    path,
-	}
-
-	if gcInterval == 0 {
-		log.Warn("Index garbage collection disabled")
-	} else {
-		idx.updateSig = make(chan struct{}, 1)
-		idx.gcDone = make(chan struct{})
-		go idx.garbageCollector(gcInterval)
-	}
-
-	return idx, nil
+	}, nil
 }
 
 func indexFileName(basePath string, fileNum uint32) string {
@@ -840,14 +823,6 @@ func (i *Index) Flush() (types.Work, error) {
 		}
 	}
 
-	if i.updateSig != nil {
-		// Send signal to tell GC there are updates.
-		select {
-		case i.updateSig <- struct{}{}:
-		default:
-		}
-	}
-
 	return work, nil
 }
 
@@ -860,11 +835,6 @@ func (i *Index) Sync() error {
 // Close calls Flush to write work and data to the current index file, and then
 // closes the file.
 func (i *Index) Close() error {
-	if i.updateSig != nil {
-		close(i.updateSig)
-		<-i.gcDone
-		i.updateSig = nil
-	}
 	_, err := i.Flush()
 	if err != nil {
 		i.file.Close()

@@ -21,16 +21,19 @@ func TestGC(t *testing.T) {
 	require.NoError(t, err)
 
 	dataPath := filepath.Join(tempDir, "storethehash.data")
-	primary, err := mhprimary.OpenMultihashPrimary(dataPath)
+	primary, err := mhprimary.OpenMultihashPrimary(dataPath, 0)
 	require.NoError(t, err)
 	defer primary.Close()
 
-	idx, err := OpenIndex(context.Background(), indexPath, primary, 24, 1024, 0)
+	idx, err := OpenIndex(context.Background(), indexPath, primary, 24, 1024)
 	require.NoError(t, err)
 	defer idx.Close()
+	gc := &indexGC{
+		index: idx,
+	}
 
 	// All index files in use, so gc should not remove any files.
-	count, err := idx.gc(context.Background())
+	count, err := gc.cycle(context.Background())
 	require.NoError(t, err)
 	require.Equal(t, count, 0)
 
@@ -44,21 +47,24 @@ func TestGC(t *testing.T) {
 	require.NoError(t, err)
 
 	// Open the index with the duplicated files.
-	idx, err = OpenIndex(context.Background(), indexPath, primary, 24, 1024, 0)
+	idx, err = OpenIndex(context.Background(), indexPath, primary, 24, 1024)
 	require.NoError(t, err)
 	defer idx.Close()
+	gc = &indexGC{
+		index: idx,
+	}
 
-	require.False(t, idx.gcCheckpoint)
+	require.False(t, gc.checkpoint)
 
 	// GC should now remove the first 2 files only.
-	count, err = idx.gc(context.Background())
+	count, err = gc.cycle(context.Background())
 	require.NoError(t, err)
 	require.Equal(t, count, 2)
 
-	require.True(t, idx.gcCheckpoint)
+	require.True(t, gc.checkpoint)
 
 	// Another GC should not remove files.
-	count, err = idx.gc(context.Background())
+	count, err = gc.cycle(context.Background())
 	require.NoError(t, err)
 	require.Equal(t, count, 0)
 

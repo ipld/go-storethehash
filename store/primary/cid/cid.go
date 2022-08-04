@@ -255,4 +255,12 @@ func (cpi *CIDPrimaryIter) Next() ([]byte, []byte, error) {
 	return c.Bytes(), value, err
 }
 
+func (cp *CIDPrimary) StorageSize() (int64, error) {
+	fi, err := cp.file.Stat()
+	if err != nil {
+		return 0, err
+	}
+	return fi.Size(), nil
+}
+
 var _ primary.PrimaryStorage = &CIDPrimary{}
