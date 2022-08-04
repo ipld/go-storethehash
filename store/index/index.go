@@ -668,16 +668,17 @@ func (i *Index) flushBucket(bucket BucketIndex, newData []byte) (types.Block, ty
 	if _, err = i.writer.Write(newData); err != nil {
 		return types.Block{}, 0, err
 	}
-	length := i.length
-	toWrite := types.Position(len(newData) + BucketPrefixSize + sizePrefixSize)
-	i.length += toWrite
 	// Fsyncs are expensive, so do not do them here; do in explicit Sync().
 
 	// Keep the reference to the stored data in the bucket.
-	return types.Block{
-		Offset: localPosToBucketPos(int64(length+sizePrefixSize), i.fileNum, i.maxFileSize),
+	blk := types.Block{
+		Offset: localPosToBucketPos(int64(i.length+sizePrefixSize), i.fileNum, i.maxFileSize),
 		Size:   types.Size(len(newData) + BucketPrefixSize),
-	}, types.Work(toWrite), nil
+	}
+	toWrite := types.Position(len(newData) + BucketPrefixSize + sizePrefixSize)
+	i.length += toWrite
+
+	return blk, types.Work(toWrite), nil
 }
 
 type bucketBlock struct {

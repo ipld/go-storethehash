@@ -28,18 +28,22 @@ type HashedBlockstore struct {
 	hashOnRead bool
 }
 
-const defaultIndexSizeBits = uint8(24)
-const defaultIndexFileSize = uint32(1024 * 1024 * 1024)
-const defaultBurstRate = 4 * 1024 * 1024
-const defaultSyncInterval = time.Second
-const defaultGCInterval = 30 * time.Minute
+const (
+	defaultIndexSizeBits   = uint8(24)
+	defaultIndexFileSize   = uint32(1024 * 1024 * 1024)
+	defaultPrimaryFileSize = uint32(1024 * 1024 * 1024)
+	defaultBurstRate       = 4 * 1024 * 1024
+	defaultSyncInterval    = time.Second
+	defaultGCInterval      = 30 * time.Minute
+)
 
 type configOptions struct {
-	indexSizeBits uint8
-	indexFileSize uint32
-	syncInterval  time.Duration
-	burstRate     types.Work
-	gcInterval    time.Duration
+	indexSizeBits   uint8
+	indexFileSize   uint32
+	primaryFileSize uint32
+	syncInterval    time.Duration
+	burstRate       types.Work
+	gcInterval      time.Duration
 }
 
 type Option func(*configOptions)
@@ -50,9 +54,15 @@ func IndexBitSize(indexBitSize uint8) Option {
 	}
 }
 
-func IndexFileSize(indexFileSize uint32) Option {
+func IndexFileSize(size uint32) Option {
 	return func(co *configOptions) {
-		co.indexFileSize = indexFileSize
+		co.indexFileSize = size
+	}
+}
+
+func PrimaryFileSize(size uint32) Option {
+	return func(co *configOptions) {
+		co.primaryFileSize = size
 	}
 }
 
@@ -77,16 +87,17 @@ func GCInterval(gcInterval time.Duration) Option {
 // OpenHashedBlockstore opens a HashedBlockstore with the default index size
 func OpenHashedBlockstore(ctx context.Context, indexPath string, dataPath string, options ...Option) (*HashedBlockstore, error) {
 	co := configOptions{
-		indexSizeBits: defaultIndexSizeBits,
-		indexFileSize: defaultIndexFileSize,
-		syncInterval:  defaultSyncInterval,
-		burstRate:     defaultBurstRate,
-		gcInterval:    defaultGCInterval,
+		indexSizeBits:   defaultIndexSizeBits,
+		indexFileSize:   defaultIndexFileSize,
+		primaryFileSize: defaultPrimaryFileSize,
+		syncInterval:    defaultSyncInterval,
+		burstRate:       defaultBurstRate,
+		gcInterval:      defaultGCInterval,
 	}
 	for _, option := range options {
 		option(&co)
 	}
-	primary, err := mhprimary.OpenMultihashPrimary(dataPath, 0)
+	primary, err := mhprimary.OpenMultihashPrimary(dataPath, co.primaryFileSize)
 	if err != nil {
 		return nil, err
 	}

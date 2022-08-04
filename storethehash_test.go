@@ -27,7 +27,8 @@ func TestParallelism(t *testing.T) {
 	dataPath := filepath.Join(tempDir, "storethehash.data")
 
 	t.Logf("Creating store in directory %s\n", tempDir)
-	bs, err := storethehash.OpenHashedBlockstore(ctx, indexPath, dataPath)
+	bs, err := storethehash.OpenHashedBlockstore(ctx, indexPath, dataPath,
+		storethehash.PrimaryFileSize(2048), storethehash.IndexFileSize(2048))
 	require.NoError(t, err)
 	bs.Start()
 	defer bs.Close()

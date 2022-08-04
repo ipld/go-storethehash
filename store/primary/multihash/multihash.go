@@ -60,15 +60,21 @@ func newHeader(maxFileSize uint32) Header {
 type MultihashPrimary struct {
 	basePath          string
 	file              *os.File
-	fileNum           uint32
 	headerPath        string
 	maxFileSize       uint32
 	writer            *bufio.Writer
-	length            types.Position
 	outstandingWork   types.Work
 	curPool, nextPool blockPool
 	poolLk            sync.RWMutex
 	flushLock         sync.Mutex
+
+	// fileNum and length track flushed data.
+	fileNum uint32
+	length  types.Position
+
+	// recFileNum and recPos track where each record will be written.
+	recFileNum uint32
+	recPos     types.Position
 }
 
 type blockRecord struct {
@@ -134,7 +140,7 @@ func OpenMultihashPrimary(path string, maxFileSize uint32) (*MultihashPrimary, e
 	if err != nil {
 		return nil, err
 	}
-	length, err := file.Seek(0, os.SEEK_END)
+	length, err := file.Seek(0, io.SeekEnd)
 	if err != nil {
 		return nil, err
 	}
@@ -142,13 +148,17 @@ func OpenMultihashPrimary(path string, maxFileSize uint32) (*MultihashPrimary, e
 	return &MultihashPrimary{
 		basePath:    path,
 		file:        file,
-		fileNum:     lastPrimaryNum,
 		headerPath:  headerPath,
 		maxFileSize: maxFileSize,
 		writer:      bufio.NewWriterSize(file, blockBufferSize),
-		length:      types.Position(length),
 		curPool:     newBlockPool(),
 		nextPool:    newBlockPool(),
+
+		fileNum: lastPrimaryNum,
+		length:  types.Position(length),
+
+		recFileNum: lastPrimaryNum,
+		recPos:     types.Position(length),
 	}, nil
 }
 
@@ -165,7 +175,7 @@ func (cp *MultihashPrimary) getCached(blk types.Block) ([]byte, []byte, error) {
 		br := cp.curPool.blocks[idx]
 		return br.key, br.value, nil
 	}
-	if blk.Offset >= cp.length {
+	if blk.Offset >= absolutePrimaryPos(cp.recPos, cp.recFileNum, cp.maxFileSize) {
 		return nil, nil, fmt.Errorf("error getting cached multihashed primary: %w", types.ErrOutOfBounds)
 	}
 	return nil, nil, nil
@@ -215,19 +225,30 @@ func readMh(buf []byte) (multihash.Multihash, int, error) {
 
 	return h, len(buf) - br.Len(), nil
 }
+
+// Put adds a new pending blockRecord to the pool and returns a Block that
+// contains the location that the block will occupy in the primary. The
+// returned primary location must be an absolute position across all primary
+// files.
 func (cp *MultihashPrimary) Put(key []byte, value []byte) (types.Block, error) {
-	size := len(key) + len(value)
-	primaryLen := SizePrefix + types.Position(size)
-	outWork := types.Work(SizePrefix + size)
+	recSize := int64(len(key) + len(value))
+	dataSize := sizePrefixSize + recSize
 
 	cp.poolLk.Lock()
 	defer cp.poolLk.Unlock()
-	length := cp.length
-	cp.length += primaryLen
-	blk := types.Block{Offset: length, Size: types.Size(size)}
+
+	if cp.recPos >= types.Position(cp.maxFileSize) {
+		cp.recFileNum++
+		cp.recPos = 0
+	}
+	absRecPos := absolutePrimaryPos(cp.recPos, cp.recFileNum, cp.maxFileSize)
+
+	blk := types.Block{Offset: absRecPos, Size: types.Size(recSize)}
+	cp.recPos += types.Position(dataSize)
+
 	cp.nextPool.refs[blk] = len(cp.nextPool.blocks)
 	cp.nextPool.blocks = append(cp.nextPool.blocks, blockRecord{key, value})
-	cp.outstandingWork += outWork
+	cp.outstandingWork += types.Work(dataSize)
 	return blk, nil
 }
 
@@ -260,6 +281,7 @@ func (cp *MultihashPrimary) flushBlock(key []byte, value []byte) (types.Work, er
 	size := len(key) + len(value)
 	sizeBuf := make([]byte, 4)
 	binary.LittleEndian.PutUint32(sizeBuf, uint32(size))
+
 	_, err := cp.writer.Write(sizeBuf)
 	if err != nil {
 		return 0, err
@@ -270,7 +292,11 @@ func (cp *MultihashPrimary) flushBlock(key []byte, value []byte) (types.Work, er
 	if _, err = cp.writer.Write(value); err != nil {
 		return 0, err
 	}
-	return types.Work(size + SizePrefix), nil
+
+	writeSize := size + sizePrefixSize
+	cp.length += types.Position(writeSize)
+
+	return types.Work(writeSize), nil
 }
 
 func (cp *MultihashPrimary) IndexKey(key []byte) ([]byte, error) {
@@ -309,6 +335,10 @@ func (cp *MultihashPrimary) Flush() (types.Work, error) {
 	cp.nextPool = newBlockPool()
 	cp.outstandingWork = 0
 	cp.poolLk.Unlock()
+
+	// The pool lock is released allowing Put to write to cp.nextPool. The
+	// flushLock is still held, preventing concurrent flushes from changing the
+	// pools of accessing cp.writer.
 
 	var work types.Work
 	for _, record := range cp.curPool.blocks {
@@ -520,6 +550,10 @@ func localizePrimaryPos(pos types.Position, maxFileSize uint32) (types.Position,
 	// Subtract file offset to get pos within its local file.
 	localPos := pos - (types.Position(fileNum) * types.Position(maxFileSize))
 	return localPos, fileNum
+}
+
+func absolutePrimaryPos(localPos types.Position, fileNum, maxFileSize uint32) types.Position {
+	return types.Position(maxFileSize)*types.Position(fileNum) + localPos
 }
 
 func findLastPrimary(basePath string, fileNum uint32) (uint32, error) {
