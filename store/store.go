@@ -55,11 +55,11 @@ type GC interface {
 // Specifying 0 for indexSizeBits and indexFileSize results in using their
 // default values. A gcInterval of 0 disables garbage collection.
 func OpenStore(ctx context.Context, path string, primary primary.PrimaryStorage, indexSizeBits uint8, indexFileSize uint32, syncInterval time.Duration, burstRate types.Work, gcInterval time.Duration, immutable bool) (*Store, error) {
-	idx, err := index.OpenIndex(ctx, path, primary, indexSizeBits, indexFileSize)
+	idx, err := index.Open(ctx, path, primary, indexSizeBits, indexFileSize)
 	if err != nil {
 		return nil, err
 	}
-	freelist, err := freelist.OpenFreeList(path + ".free")
+	freelist, err := freelist.Open(path + ".free")
 	if err != nil {
 		return nil, err
 	}

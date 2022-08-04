@@ -340,7 +340,7 @@ func (gc *primaryGC) processFreeList(ctx context.Context) error {
 	}
 	defer flFile.Close()
 
-	flIter := freelist.NewFreeListIter(flFile)
+	flIter := freelist.NewIter(flFile)
 	for {
 		free, err := flIter.Next()
 		if err != nil {

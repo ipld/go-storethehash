@@ -136,13 +136,13 @@ type Index struct {
 
 type bucketPool map[BucketIndex][]byte
 
-// OpenIndex opens the index for the given primary. The index is created if
-// there is no existing index at the specified path. If there is an older
-// version index, then it is automatically upgraded.
+// Open opens the index for the given primary. The index is created if there is
+// no existing index at the specified path. If there is an older version index,
+// then it is automatically upgraded.
 //
 // Specifying 0 for indexSizeBits and maxFileSize results in using their
 // default values.
-func OpenIndex(ctx context.Context, path string, primary primary.PrimaryStorage, indexSizeBits uint8, maxFileSize uint32) (*Index, error) {
+func Open(ctx context.Context, path string, primary primary.PrimaryStorage, indexSizeBits uint8, maxFileSize uint32) (*Index, error) {
 	var file *os.File
 	headerPath := filepath.Clean(path) + ".info"
 
@@ -844,7 +844,7 @@ func (i *Index) OutstandingWork() types.Work {
 //
 // On each iteration it returns the position of the record within the index
 // together with the raw record list data.
-type IndexIter struct {
+type Iterator struct {
 	// The index data we are iterating over
 	index io.ReadCloser
 	// The current position within the index
@@ -855,14 +855,14 @@ type IndexIter struct {
 	fileNum uint32
 }
 
-func NewIndexIter(basePath string, fileNum uint32) *IndexIter {
-	return &IndexIter{
+func NewIter(basePath string, fileNum uint32) *Iterator {
+	return &Iterator{
 		base:    basePath,
 		fileNum: fileNum,
 	}
 }
 
-func (iter *IndexIter) Next() ([]byte, types.Position, bool, error) {
+func (iter *Iterator) Next() ([]byte, types.Position, bool, error) {
 	if iter.index == nil {
 		file, err := openFileForScan(indexFileName(iter.base, iter.fileNum))
 		if err != nil {
@@ -900,7 +900,7 @@ func (iter *IndexIter) Next() ([]byte, types.Position, bool, error) {
 	return data, pos, false, nil
 }
 
-func (iter *IndexIter) Close() error {
+func (iter *Iterator) Close() error {
 	if iter.index == nil {
 		return nil
 	}

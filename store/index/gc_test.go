@@ -21,11 +21,11 @@ func TestGC(t *testing.T) {
 	require.NoError(t, err)
 
 	dataPath := filepath.Join(tempDir, "storethehash.data")
-	primary, err := mhprimary.OpenMultihashPrimary(dataPath, 0)
+	primary, err := mhprimary.Open(dataPath, 0)
 	require.NoError(t, err)
 	defer primary.Close()
 
-	idx, err := OpenIndex(context.Background(), indexPath, primary, 24, 1024)
+	idx, err := Open(context.Background(), indexPath, primary, 24, 1024)
 	require.NoError(t, err)
 	defer idx.Close()
 	gc := &indexGC{
@@ -47,7 +47,7 @@ func TestGC(t *testing.T) {
 	require.NoError(t, err)
 
 	// Open the index with the duplicated files.
-	idx, err = OpenIndex(context.Background(), indexPath, primary, 24, 1024)
+	idx, err = Open(context.Background(), indexPath, primary, 24, 1024)
 	require.NoError(t, err)
 	defer idx.Close()
 	gc = &indexGC{

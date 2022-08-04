@@ -15,7 +15,7 @@ import (
 func TestFLPut(t *testing.T) {
 	tempDir := t.TempDir()
 	flPath := filepath.Join(tempDir, "storethehash.free")
-	fl, err := freelist.OpenFreeList(flPath)
+	fl, err := freelist.Open(flPath)
 	require.NoError(t, err)
 
 	blks := generateFreeListEntries(100)
@@ -39,7 +39,7 @@ func TestFLPut(t *testing.T) {
 	file, err := os.Open(flPath)
 	t.Cleanup(func() { file.Close() })
 	require.NoError(t, err)
-	iter := freelist.NewFreeListIter(file)
+	iter := freelist.NewIter(file)
 	for _, expectedBlk := range blks {
 		blk, err := iter.Next()
 		require.NoError(t, err)

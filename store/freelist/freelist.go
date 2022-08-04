@@ -30,7 +30,7 @@ const (
 	blockPoolSize = 1024
 )
 
-func OpenFreeList(path string) (*FreeList, error) {
+func Open(path string) (*FreeList, error) {
 	file, err := os.OpenFile(path, os.O_RDWR|os.O_APPEND|os.O_CREATE, 0o644)
 	if err != nil {
 		return nil, err
@@ -125,20 +125,20 @@ func (cp *FreeList) OutstandingWork() types.Work {
 	return cp.outstandingWork
 }
 
-func (cp *FreeList) Iter() (*FreeListIter, error) {
-	return NewFreeListIter(cp.file), nil
+func (cp *FreeList) Iter() (*Iterator, error) {
+	return NewIter(cp.file), nil
 }
 
-func NewFreeListIter(reader *os.File) *FreeListIter {
-	return &FreeListIter{reader, 0}
+func NewIter(reader *os.File) *Iterator {
+	return &Iterator{reader, 0}
 }
 
-type FreeListIter struct {
+type Iterator struct {
 	reader *os.File
 	pos    types.Position
 }
 
-func (cpi *FreeListIter) Next() (*types.Block, error) {
+func (cpi *Iterator) Next() (*types.Block, error) {
 	sizeBuf := make([]byte, types.SizeBytesLen)
 	offBuf := make([]byte, types.OffBytesLen)
 	_, err := cpi.reader.ReadAt(offBuf, int64(cpi.pos))

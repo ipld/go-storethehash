@@ -95,12 +95,12 @@ func newBlockPool() blockPool {
 	}
 }
 
-// OpenMultihashPrimary opens the primary storage file. The primary is created if
+// Open opens the multihash primary storage file. The primary is created if
 // there is no existing primary at the specified path. If there is an older
 // version primary, then it is automatically upgraded.
 //
 // Specifying 0 for maxFileSize results in using the default value.
-func OpenMultihashPrimary(path string, maxFileSize uint32) (*MultihashPrimary, error) {
+func Open(path string, maxFileSize uint32) (*MultihashPrimary, error) {
 	headerPath := filepath.Clean(path) + ".info"
 
 	if maxFileSize == 0 {
@@ -379,7 +379,7 @@ func (cp *MultihashPrimary) OutstandingWork() types.Work {
 	return cp.outstandingWork
 }
 
-type MultihashPrimaryIter struct {
+type Iterator struct {
 	// The index data we are iterating over
 	reader io.ReadCloser
 	// The current position within the index
@@ -399,17 +399,17 @@ func (cp *MultihashPrimary) Iter() (primary.PrimaryStorageIter, error) {
 		return nil, err
 	}
 
-	return NewMultihashPrimaryIter(cp.basePath, header.FirstFile), nil
+	return NewIter(cp.basePath, header.FirstFile), nil
 }
 
-func NewMultihashPrimaryIter(basePath string, fileNum uint32) *MultihashPrimaryIter {
-	return &MultihashPrimaryIter{
+func NewIter(basePath string, fileNum uint32) *Iterator {
+	return &Iterator{
 		base:    basePath,
 		fileNum: fileNum,
 	}
 }
 
-func (iter *MultihashPrimaryIter) Next() ([]byte, []byte, error) {
+func (iter *Iterator) Next() ([]byte, []byte, error) {
 	if iter == nil {
 		return nil, nil, nil
 	}
@@ -452,7 +452,7 @@ func (iter *MultihashPrimaryIter) Next() ([]byte, []byte, error) {
 	return readNode(data)
 }
 
-func (iter *MultihashPrimaryIter) Close() error {
+func (iter *Iterator) Close() error {
 	if iter.reader == nil {
 		return nil
 	}

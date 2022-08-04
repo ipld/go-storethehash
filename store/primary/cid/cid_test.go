@@ -20,7 +20,7 @@ import (
 func TestIndexPut(t *testing.T) {
 	tempDir := t.TempDir()
 	primaryPath := filepath.Join(tempDir, "storethehash.primary")
-	primaryStorage, err := cidprimary.OpenCIDPrimary(primaryPath)
+	primaryStorage, err := cidprimary.Open(primaryPath)
 	require.NoError(t, err)
 
 	blks := testutil.GenerateBlocksOfSize(5, 100)
@@ -46,7 +46,7 @@ func TestIndexPut(t *testing.T) {
 	file, err := os.Open(primaryPath)
 	t.Cleanup(func() { file.Close() })
 	require.NoError(t, err)
-	iter := cidprimary.NewCIDPrimaryIter(file)
+	iter := cidprimary.NewIter(file)
 	for _, expectedBlk := range blks {
 		key, value, err := iter.Next()
 		require.NoError(t, err)
@@ -67,7 +67,7 @@ func TestIndexPut(t *testing.T) {
 func TestIndexGetEmptyIndex(t *testing.T) {
 	tempDir := t.TempDir()
 	primaryPath := filepath.Join(tempDir, "storethehash.primary")
-	primaryStorage, err := cidprimary.OpenCIDPrimary(primaryPath)
+	primaryStorage, err := cidprimary.Open(primaryPath)
 	require.NoError(t, err)
 	defer primaryStorage.Close()
 
@@ -83,7 +83,7 @@ func TestIndexGetEmptyIndex(t *testing.T) {
 func TestIndexGet(t *testing.T) {
 	tempDir := t.TempDir()
 	primaryPath := filepath.Join(tempDir, "storethehash.primary")
-	primaryStorage, err := cidprimary.OpenCIDPrimary(primaryPath)
+	primaryStorage, err := cidprimary.Open(primaryPath)
 	require.NoError(t, err)
 
 	// load blocks
@@ -134,7 +134,7 @@ func TestFlushRace(t *testing.T) {
 	const goroutines = 64
 	tempDir := t.TempDir()
 	primaryPath := filepath.Join(tempDir, "storethehash.primary")
-	primaryStorage, err := cidprimary.OpenCIDPrimary(primaryPath)
+	primaryStorage, err := cidprimary.Open(primaryPath)
 	require.NoError(t, err)
 
 	// load blocks
@@ -165,7 +165,7 @@ func TestFlushRace(t *testing.T) {
 func TestFlushExcess(t *testing.T) {
 	tempDir := t.TempDir()
 	primaryPath := filepath.Join(tempDir, "storethehash.primary")
-	primaryStorage, err := cidprimary.OpenCIDPrimary(primaryPath)
+	primaryStorage, err := cidprimary.Open(primaryPath)
 	require.NoError(t, err)
 
 	// load blocks

@@ -46,7 +46,7 @@ func newBlockPool() blockPool {
 	}
 }
 
-func OpenCIDPrimary(path string) (*CIDPrimary, error) {
+func Open(path string) (*CIDPrimary, error) {
 	file, err := os.OpenFile(path, os.O_RDWR|os.O_APPEND|os.O_CREATE, 0o644)
 	if err != nil {
 		return nil, err
@@ -221,19 +221,19 @@ func (cp *CIDPrimary) OutstandingWork() types.Work {
 	return cp.outstandingWork
 }
 func (cp *CIDPrimary) Iter() (primary.PrimaryStorageIter, error) {
-	return NewCIDPrimaryIter(cp.file), nil
+	return NewIter(cp.file), nil
 }
 
-func NewCIDPrimaryIter(reader *os.File) *CIDPrimaryIter {
-	return &CIDPrimaryIter{reader, 0}
+func NewIter(reader *os.File) *Iterator {
+	return &Iterator{reader, 0}
 }
 
-type CIDPrimaryIter struct {
+type Iterator struct {
 	reader *os.File
 	pos    types.Position
 }
 
-func (cpi *CIDPrimaryIter) Next() ([]byte, []byte, error) {
+func (cpi *Iterator) Next() ([]byte, []byte, error) {
 	sizeBuff := make([]byte, CIDSizePrefix)
 	_, err := cpi.reader.ReadAt(sizeBuff, int64(cpi.pos))
 	if err != nil {

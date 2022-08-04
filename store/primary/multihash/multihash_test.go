@@ -20,7 +20,7 @@ import (
 func TestIndexPut(t *testing.T) {
 	tempDir := t.TempDir()
 	primaryPath := filepath.Join(tempDir, "storethehash.primary")
-	primaryStorage, err := mhprimary.OpenMultihashPrimary(primaryPath, 0)
+	primaryStorage, err := mhprimary.Open(primaryPath, 0)
 	require.NoError(t, err)
 
 	blks := testutil.GenerateBlocksOfSize(5, 100)
@@ -42,7 +42,7 @@ func TestIndexPut(t *testing.T) {
 	err = primaryStorage.Sync()
 	require.NoError(t, err)
 
-	iter := mhprimary.NewMultihashPrimaryIter(primaryPath, 0)
+	iter := mhprimary.NewIter(primaryPath, 0)
 	t.Cleanup(func() { iter.Close() })
 
 	for _, expectedBlk := range blks {
@@ -64,7 +64,7 @@ func TestIndexPut(t *testing.T) {
 func TestIndexGetEmptyIndex(t *testing.T) {
 	tempDir := t.TempDir()
 	primaryPath := filepath.Join(tempDir, "storethehash.primary")
-	primaryStorage, err := mhprimary.OpenMultihashPrimary(primaryPath, 0)
+	primaryStorage, err := mhprimary.Open(primaryPath, 0)
 	require.NoError(t, err)
 	defer primaryStorage.Close()
 
@@ -80,7 +80,7 @@ func TestIndexGetEmptyIndex(t *testing.T) {
 func TestIndexGet(t *testing.T) {
 	tempDir := t.TempDir()
 	primaryPath := filepath.Join(tempDir, "storethehash.primary")
-	primaryStorage, err := mhprimary.OpenMultihashPrimary(primaryPath, 0)
+	primaryStorage, err := mhprimary.Open(primaryPath, 0)
 	require.NoError(t, err)
 
 	// load blocks
@@ -129,7 +129,7 @@ func TestFlushRace(t *testing.T) {
 	const goroutines = 64
 	tempDir := t.TempDir()
 	primaryPath := filepath.Join(tempDir, "storethehash.primary")
-	primaryStorage, err := mhprimary.OpenMultihashPrimary(primaryPath, 0)
+	primaryStorage, err := mhprimary.Open(primaryPath, 0)
 	require.NoError(t, err)
 
 	// load blocks
@@ -160,7 +160,7 @@ func TestFlushRace(t *testing.T) {
 func TestFlushExcess(t *testing.T) {
 	tempDir := t.TempDir()
 	primaryPath := filepath.Join(tempDir, "storethehash.primary")
-	primaryStorage, err := mhprimary.OpenMultihashPrimary(primaryPath, 0)
+	primaryStorage, err := mhprimary.Open(primaryPath, 0)
 	require.NoError(t, err)
 
 	// load blocks

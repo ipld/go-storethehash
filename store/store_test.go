@@ -28,7 +28,7 @@ const defaultGCInterval = 0 //30 * time.Minute
 func initStore(t *testing.T, dir string, immutable bool) (*store.Store, error) {
 	indexPath := filepath.Join(dir, "storethehash.index")
 	dataPath := filepath.Join(dir, "storethehash.data")
-	primary, err := cidprimary.OpenCIDPrimary(dataPath)
+	primary, err := cidprimary.Open(dataPath)
 	if err != nil {
 		return nil, err
 	}
@@ -80,7 +80,7 @@ func TestUpdate(t *testing.T) {
 		require.NoError(t, err)
 		t.Cleanup(func() { require.NoError(t, file.Close()) })
 
-		iter := freelist.NewFreeListIter(file)
+		iter := freelist.NewIter(file)
 		// Check freelist for the only update. Should be the first position
 		blk, err := iter.Next()
 		require.Equal(t, blk.Offset, types.Position(0))
@@ -127,7 +127,7 @@ func TestUpdate(t *testing.T) {
 		require.NoError(t, err)
 		t.Cleanup(func() { require.NoError(t, file.Close()) })
 
-		iter := freelist.NewFreeListIter(file)
+		iter := freelist.NewIter(file)
 		// Check freelist -- no updates
 		_, err = iter.Next()
 		require.EqualError(t, err, io.EOF.Error())
@@ -177,7 +177,7 @@ func TestUpdate(t *testing.T) {
 		require.NoError(t, err)
 		t.Cleanup(func() { require.NoError(t, file.Close()) })
 
-		iter := freelist.NewFreeListIter(file)
+		iter := freelist.NewIter(file)
 		// Check freelist -- no updates
 		_, err = iter.Next()
 		require.EqualError(t, err, io.EOF.Error())
@@ -223,7 +223,7 @@ func TestRemove(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, file.Close()) })
 
-	iter := freelist.NewFreeListIter(file)
+	iter := freelist.NewIter(file)
 	// Check freelist for the only removal. Should be the first position
 	blk, err := iter.Next()
 	require.Equal(t, blk.Offset, types.Position(0))
@@ -237,7 +237,7 @@ func TestRecoverBadKey(t *testing.T) {
 	tmpDir := t.TempDir()
 	indexPath := filepath.Join(tmpDir, "storethehash.index")
 	dataPath := filepath.Join(tmpDir, "storethehash.data")
-	primary, err := cidprimary.OpenCIDPrimary(dataPath)
+	primary, err := cidprimary.Open(dataPath)
 	require.NoError(t, err)
 	s, err := store.OpenStore(context.Background(), indexPath, primary, defaultIndexSizeBits, defaultIndexFileSize, defaultSyncInterval, defaultBurstRate, defaultGCInterval, false)
 	require.NoError(t, err)
@@ -253,7 +253,7 @@ func TestRecoverBadKey(t *testing.T) {
 	require.NoError(t, err)
 
 	// Open store again.
-	primary, err = cidprimary.OpenCIDPrimary(dataPath)
+	primary, err = cidprimary.Open(dataPath)
 	require.NoError(t, err)
 	s, err = store.OpenStore(context.Background(), indexPath, primary, defaultIndexSizeBits, defaultIndexFileSize, defaultSyncInterval, defaultBurstRate, defaultGCInterval, false)
 	require.NoError(t, err)
