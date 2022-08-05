@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"sync"
 	"time"
 
 	logging "github.com/ipfs/go-log/v2"
@@ -21,8 +22,8 @@ type primaryGC struct {
 	primary   *MultihashPrimary
 	updateSig chan struct{}
 	done      chan struct{}
-
-	busyAt map[uint32]int64
+	cycleLock sync.Mutex
+	lowUse    map[uint32]struct{}
 
 	updateIndex UpdateIndexFunc
 }
@@ -35,8 +36,7 @@ func NewGC(primary *MultihashPrimary, freeList *freelist.FreeList, gcInterval ti
 		primary:   primary,
 		updateSig: make(chan struct{}, 1),
 		done:      make(chan struct{}),
-
-		busyAt: make(map[uint32]int64),
+		lowUse:    make(map[uint32]struct{}),
 
 		updateIndex: updateIndex,
 	}
@@ -97,7 +97,7 @@ func (gc *primaryGC) run(gcInterval time.Duration) {
 			go func() {
 				defer close(gcDone)
 				log.Infow("GC started")
-				fileCount, err := gc.cycle(ctx)
+				fileCount, err := gc.Cycle(ctx)
 				if err != nil {
 					log.Errorw("GC failed", "err", err)
 					return
@@ -119,8 +119,11 @@ func (gc *primaryGC) run(gcInterval time.Duration) {
 
 // gc searches for and removes stale index files. Returns the number of unused
 // index files that were removed.
-func (gc *primaryGC) cycle(ctx context.Context) (int, error) {
-	err := gc.processFreeList(ctx)
+func (gc *primaryGC) Cycle(ctx context.Context) (int, error) {
+	gc.cycleLock.Lock()
+	defer gc.cycleLock.Unlock()
+
+	flCount, err := gc.processFreeList(ctx)
 	if err != nil {
 		return 0, fmt.Errorf("cannot process freelist: %w", err)
 	}
@@ -129,44 +132,68 @@ func (gc *primaryGC) cycle(ctx context.Context) (int, error) {
 	if err != nil {
 		return 0, fmt.Errorf("cannot read primary header: %w", err)
 	}
-	fileNum := header.FirstFile
 
-	var count int
-	for {
-		if fileNum == gc.primary.fileNum {
-			// Do not try to GC the current primary file.
-			break
+	var delCount int
+
+	// If no new freelist entries, evaporate the low use files.
+	if flCount == 0 {
+		for fileNum := range gc.lowUse {
+			deleted, err := gc.reapFile(ctx, fileNum, &header)
+			if err != nil {
+				return 0, err
+			}
+			if deleted {
+				delete(gc.lowUse, fileNum)
+				delCount++
+			}
 		}
-		if ctx.Err() != nil {
-			return 0, ctx.Err()
-		}
-		primaryPath := primaryFileName(gc.primary.basePath, fileNum)
-		dead, err := gc.reapFile(ctx, fileNum, primaryPath)
+		return delCount, nil
+	}
+
+	// Try to GC all but the current primary file.
+	for fileNum := header.FirstFile; fileNum != gc.primary.fileNum; fileNum++ {
+		deleted, err := gc.reapFile(ctx, fileNum, &header)
 		if err != nil {
 			return 0, err
 		}
-		if dead && fileNum == header.FirstFile {
-			header.FirstFile = fileNum + 1
-			err = writeHeader(gc.primary.headerPath, header)
-			if err != nil {
-				return 0, err
-			}
-			err = os.Remove(primaryPath)
-			if err != nil {
-				return 0, err
-			}
-			count++
+		if deleted {
+			delCount++
 		}
-		fileNum++
 	}
 
-	return count, nil
+	return delCount, nil
 }
 
-// reapFile removes empty entries from the end of the file. If the file is
+func (gc *primaryGC) reapFile(ctx context.Context, fileNum uint32, header *Header) (bool, error) {
+	if ctx.Err() != nil {
+		return false, ctx.Err()
+	}
+
+	dead, err := gc.reapRecords(ctx, fileNum)
+	if err != nil {
+		return false, err
+	}
+	if dead && fileNum == header.FirstFile {
+		header.FirstFile++
+		err = writeHeader(gc.primary.headerPath, *header)
+		if err != nil {
+			return false, err
+		}
+		err = os.Remove(primaryFileName(gc.primary.basePath, fileNum))
+		if err != nil {
+			return false, err
+		}
+		return true, nil
+	}
+
+	return false, nil
+}
+
+// reapRecords removes empty records from the end of the file. If the file is
 // empty, then returns true to indicate the file can be deleted.
-func (gc *primaryGC) reapFile(ctx context.Context, fileNum uint32, primaryPath string) (bool, error) {
-	file, err := os.Open(primaryPath)
+func (gc *primaryGC) reapRecords(ctx context.Context, fileNum uint32) (bool, error) {
+	primaryPath := primaryFileName(gc.primary.basePath, fileNum)
+	file, err := os.OpenFile(primaryPath, os.O_RDWR, 0644)
 	if err != nil {
 		return false, fmt.Errorf("cannot open primary file: %w", err)
 	}
@@ -180,16 +207,9 @@ func (gc *primaryGC) reapFile(ctx context.Context, fileNum uint32, primaryPath s
 		return true, nil
 	}
 
-	busyAt, ok := gc.busyAt[fileNum]
-	if ok {
-		_, err = file.Seek(busyAt, io.SeekStart)
-		if err != nil {
-			return false, err
-		}
-	}
-
 	var freeCount, busyCount int
-	var freeAt, prevBusyAt int64
+	var busyAt, freeAt, prevBusyAt int64
+	var busySize, prevBusySize int64
 	freeAt = -1
 	prevBusyAt = -1
 
@@ -224,23 +244,26 @@ func (gc *primaryGC) reapFile(ctx context.Context, fileNum uint32, primaryPath s
 		}
 
 		if allZeros(data) {
+			// Record is deleted.
 			freeCount++
 			if busyAt > freeAt {
 				freeAt = pos
 				if busyAt == freeAt {
 					busyAt = prevBusyAt
+					busySize = prevBusySize
 				}
 			}
 		} else {
+			// Record is in use.
 			busyCount++
 			prevBusyAt = busyAt
+			prevBusySize = busySize
 			busyAt = pos
+			busySize = int64(size)
 		}
 
 		pos += sizePrefixSize + int64(size)
 	}
-
-	delete(gc.busyAt, fileNum)
 
 	if freeAt > busyAt {
 		// End of primary is free.
@@ -262,8 +285,8 @@ func (gc *primaryGC) reapFile(ctx context.Context, fileNum uint32, primaryPath s
 	// If less than 25% of the records in the file are still used, rewrite the
 	// last 2 record still in use into a later primary. This will allow low-use
 	// primary files to evaporate over time.
-	if freeCount > busyCount*4 {
-		for {
+	if freeCount >= busyCount*3 {
+		for busyAt >= 0 {
 			if ctx.Err() != nil {
 				return false, ctx.Err()
 			}
@@ -296,23 +319,25 @@ func (gc *primaryGC) reapFile(ctx context.Context, fileNum uint32, primaryPath s
 			if err = gc.updateIndex(indexKey, fileOffset); err != nil {
 				return false, err
 			}
-			// Remove the old record data from this primary file.
-			if err = file.Truncate(busyAt); err != nil {
+
+			// Do not truncate file here, because moved record may not be
+			// written yet. Instead put moved record onto freelist and let next
+			// GC cycle process freelist and delete this record.
+
+			// Add outdated data in primary storage to freelist
+			offset := absolutePrimaryPos(types.Position(busyAt), fileNum, gc.primary.maxFileSize)
+			blk := types.Block{Size: types.Size(busySize), Offset: types.Position(offset)}
+			if err = gc.freeList.Put(blk); err != nil {
 				return false, err
 			}
-			if busyAt <= 0 {
-				break
-			}
+
 			busyAt = prevBusyAt
+			busySize = prevBusySize
 			prevBusyAt = -1
 		}
-		// Return true if primary is free.
-		return busyAt == 0, nil
-	}
 
-	// Remember the last busy location so that next GC reap starts looking
-	// there instead of rescanning whole file.
-	gc.busyAt[fileNum] = busyAt
+		gc.lowUse[fileNum] = struct{}{}
+	}
 
 	return false, nil
 }
@@ -328,40 +353,50 @@ func allZeros(data []byte) bool {
 
 // processFreeList reads the freelist and marks the locations in primary
 // files as dead by zeroing the data of the dead record.
-func (gc *primaryGC) processFreeList(ctx context.Context) error {
+func (gc *primaryGC) processFreeList(ctx context.Context) (int, error) {
 	flPath, err := gc.freeList.Rotate()
 	if err != nil {
-		return fmt.Errorf("cannot rotate freelist: %w", err)
+		return 0, fmt.Errorf("cannot rotate freelist: %w", err)
 	}
 
 	flFile, err := os.OpenFile(flPath, os.O_RDONLY, 0644)
 	if err != nil {
-		return fmt.Errorf("error opening freelist: %w", err)
+		return 0, fmt.Errorf("error opening freelist work file: %w", err)
 	}
 	defer flFile.Close()
 
-	flIter := freelist.NewIter(flFile)
-	for {
-		free, err := flIter.Next()
-		if err != nil {
-			if err == io.EOF {
-				break
-			}
-			return fmt.Errorf("error reading freelist: %w", err)
-		}
-
-		// Mark dead location with tombstone by zeroing the record's data.
-		err = gc.primary.ZeroRecord(free.Offset, free.Size)
-		if err != nil {
-			return fmt.Errorf("gc cannot zero primary record: %w", err)
-		}
-
+	fi, err := flFile.Stat()
+	if err != nil {
+		return 0, fmt.Errorf("cannot stat freelist work file: %w", err)
 	}
+
+	var count int
+	if fi.Size() != 0 {
+		flIter := freelist.NewIter(flFile)
+		for {
+			free, err := flIter.Next()
+			if err != nil {
+				if err == io.EOF {
+					break
+				}
+				return 0, fmt.Errorf("error reading freelist: %w", err)
+			}
+
+			// Mark dead location with tombstone by zeroing the record's data.
+			err = gc.primary.zeroRecord(free.Offset, free.Size)
+			if err != nil {
+				return 0, fmt.Errorf("gc cannot zero primary record: %w", err)
+			}
+
+			count++
+		}
+	}
+
 	flFile.Close()
 	err = os.Remove(flPath)
 	if err != nil {
-		return fmt.Errorf("error removing freelist: %w", err)
+		return 0, fmt.Errorf("error removing freelist: %w", err)
 	}
 
-	return nil
+	return count, nil
 }

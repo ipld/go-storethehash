@@ -3,6 +3,7 @@ package store
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"math"
 	"sync"
@@ -47,6 +48,7 @@ type Store struct {
 type GC interface {
 	SignalUpdate()
 	Close()
+	Cycle(context.Context) (int, error)
 }
 
 // OpenStore opens the index and freelist and returns a Store with the given
@@ -102,6 +104,20 @@ func (s *Store) Start() {
 	}
 }
 
+func (s *Store) IndexGC(ctx context.Context) (int, error) {
+	if s.indexGC == nil {
+		return 0, errors.New("index garbage collection not enabled")
+	}
+	return s.indexGC.Cycle(ctx)
+}
+
+func (s *Store) PrimaryGC(ctx context.Context) (int, error) {
+	if s.primaryGC == nil {
+		return 0, errors.New("primary garbage collection not enabled")
+	}
+	return s.primaryGC.Cycle(ctx)
+}
+
 func (s *Store) run() {
 	defer close(s.closed)
 	d := time.NewTicker(s.syncInterval)
@@ -109,7 +125,9 @@ func (s *Store) run() {
 	for {
 		select {
 		case <-s.flushNow:
-			s.Flush()
+			if err := s.Flush(); err != nil {
+				s.setErr(err)
+			}
 		case <-s.closing:
 			d.Stop()
 			select {
@@ -447,7 +465,7 @@ func (s *Store) outstandingWork() bool {
 
 // Flush writes outstanding work and buffered data to the primary, index, and
 // freelist files. It then syncs these files to permanent storage.
-func (s *Store) Flush() {
+func (s *Store) Flush() error {
 	lastFlush := time.Now()
 
 	s.rateLk.Lock()
@@ -455,13 +473,12 @@ func (s *Store) Flush() {
 	s.rateLk.Unlock()
 
 	if !s.outstandingWork() {
-		return
+		return nil
 	}
 
 	work, err := s.commit()
 	if err != nil {
-		s.setErr(err)
-		return
+		return err
 	}
 
 	now := time.Now()
@@ -473,6 +490,8 @@ func (s *Store) Flush() {
 		s.rate = rate
 		s.rateLk.Unlock()
 	}
+
+	return nil
 }
 
 func (s *Store) Has(key []byte) (bool, error) {

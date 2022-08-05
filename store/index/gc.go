@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"sync"
 	"time"
 
 	logging "github.com/ipfs/go-log/v2"
@@ -18,6 +19,7 @@ type indexGC struct {
 	index     *Index
 	updateSig chan struct{}
 	done      chan struct{}
+	cycleLock sync.Mutex
 
 	// Checkpoint is the last bucket index still in use by first file.
 	checkpoint  bool
@@ -86,7 +88,7 @@ func (gc *indexGC) run(gcInterval time.Duration) {
 			go func() {
 				defer close(gcDone)
 				log.Infow("GC started")
-				fileCount, err := gc.cycle(ctx)
+				fileCount, err := gc.Cycle(ctx)
 				if err != nil {
 					log.Errorw("GC failed", "err", err)
 					return
@@ -108,7 +110,10 @@ func (gc *indexGC) run(gcInterval time.Duration) {
 
 // cycle searches for and removes stale index files. Returns the number of
 // unused index files that were removed.
-func (gc *indexGC) cycle(ctx context.Context) (int, error) {
+func (gc *indexGC) Cycle(ctx context.Context) (int, error) {
+	gc.cycleLock.Lock()
+	defer gc.cycleLock.Unlock()
+
 	header, err := readHeader(gc.index.headerPath)
 	if err != nil {
 		return 0, err

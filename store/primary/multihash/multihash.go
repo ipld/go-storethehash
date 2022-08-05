@@ -241,9 +241,11 @@ func (cp *MultihashPrimary) Put(key []byte, value []byte) (types.Block, error) {
 		cp.recFileNum++
 		cp.recPos = 0
 	}
-	absRecPos := absolutePrimaryPos(cp.recPos, cp.recFileNum, cp.maxFileSize)
 
+	// Tell index the location that this record will be writtten.
+	absRecPos := absolutePrimaryPos(cp.recPos, cp.recFileNum, cp.maxFileSize)
 	blk := types.Block{Offset: absRecPos, Size: types.Size(recSize)}
+
 	cp.recPos += types.Position(dataSize)
 
 	cp.nextPool.refs[blk] = len(cp.nextPool.blocks)
@@ -572,20 +574,21 @@ func findLastPrimary(basePath string, fileNum uint32) (uint32, error) {
 	return lastFound, nil
 }
 
-func (mp *MultihashPrimary) ZeroRecord(pos types.Position, size types.Size) error {
+func (mp *MultihashPrimary) zeroRecord(pos types.Position, size types.Size) error {
 	localPos, fileNum := localizePrimaryPos(pos, mp.maxFileSize)
 	fileName := primaryFileName(mp.basePath, fileNum)
-	file, err := os.Open(fileName)
+	file, err := os.OpenFile(fileName, os.O_WRONLY, 0644)
 	if err != nil {
 		return fmt.Errorf("cannot open primary file %s: %w", fileName, err)
 	}
 	defer file.Close()
 
-	zeros := make([]byte, size-sizePrefixSize)
+	zeros := make([]byte, size)
 
 	_, err = file.WriteAt(zeros, int64(localPos+sizePrefixSize))
 	if err != nil {
 		return fmt.Errorf("cannot write to primary file %s: %w", fileName, err)
 	}
+
 	return nil
 }
