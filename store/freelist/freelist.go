@@ -19,6 +19,7 @@ type FreeList struct {
 	outstandingWork types.Work
 	blockPool       []types.Block
 	poolLk          sync.RWMutex
+	flushLock       sync.Mutex
 }
 
 const (
@@ -68,6 +69,9 @@ func (cp *FreeList) flushBlock(blk types.Block) (types.Work, error) {
 
 // Flush writes outstanding work and buffered data to the freelist file.
 func (cp *FreeList) Flush() (types.Work, error) {
+	cp.flushLock.Lock()
+	defer cp.flushLock.Unlock()
+
 	cp.poolLk.Lock()
 	if len(cp.blockPool) == 0 {
 		cp.poolLk.Unlock()
@@ -77,6 +81,10 @@ func (cp *FreeList) Flush() (types.Work, error) {
 	cp.blockPool = make([]types.Block, 0, blockPoolSize)
 	cp.outstandingWork = 0
 	cp.poolLk.Unlock()
+
+	// The pool lock is released allowing Put to write to nextPool. The
+	// flushLock is still held, preventing concurrent flushes from changing the
+	// pool or accessing writer.
 
 	var work types.Work
 	for _, record := range blocks {
