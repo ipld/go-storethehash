@@ -29,23 +29,21 @@ type HashedBlockstore struct {
 }
 
 const (
-	defaultIndexSizeBits     = uint8(24)
-	defaultIndexFileSize     = uint32(1024 * 1024 * 1024)
-	defaultPrimaryFileSize   = uint32(1024 * 1024 * 1024)
-	defaultBurstRate         = 4 * 1024 * 1024
-	defaultSyncInterval      = time.Second
-	defaultGCIntervalIndex   = 31 * time.Minute
-	defaultGCIntervalPrimary = 47 * time.Minute
+	defaultIndexSizeBits   = uint8(24)
+	defaultIndexFileSize   = uint32(1024 * 1024 * 1024)
+	defaultPrimaryFileSize = uint32(1024 * 1024 * 1024)
+	defaultBurstRate       = 4 * 1024 * 1024
+	defaultSyncInterval    = time.Second
+	defaultGCInterval      = 31 * time.Minute
 )
 
 type configOptions struct {
-	indexSizeBits     uint8
-	indexFileSize     uint32
-	primaryFileSize   uint32
-	syncInterval      time.Duration
-	burstRate         types.Work
-	gcIntervalIndex   time.Duration
-	gcIntervalPrimary time.Duration
+	indexSizeBits   uint8
+	indexFileSize   uint32
+	primaryFileSize uint32
+	syncInterval    time.Duration
+	burstRate       types.Work
+	gcInterval      time.Duration
 }
 
 type Option func(*configOptions)
@@ -80,32 +78,22 @@ func BurstRate(burstRate uint64) Option {
 	}
 }
 
-// GCIntervalIndex sets how often to run index garbage collection, 0 to
-// disable. Default is 31 minutes.
-func GCIntervalIndex(interval time.Duration) Option {
+// GCInterval sets how often to run garbage collection, 0 to disable.
+func GCInterval(interval time.Duration) Option {
 	return func(co *configOptions) {
-		co.gcIntervalIndex = interval
-	}
-}
-
-// GCIntervalPrimary sets how often to run index garbage collection, 0 to
-// disable. Default is 47 minutes.
-func GCIntervalPrimary(interval time.Duration) Option {
-	return func(co *configOptions) {
-		co.gcIntervalPrimary = interval
+		co.gcInterval = interval
 	}
 }
 
 // OpenHashedBlockstore opens a HashedBlockstore with the default index size
 func OpenHashedBlockstore(ctx context.Context, indexPath string, dataPath string, options ...Option) (*HashedBlockstore, error) {
 	co := configOptions{
-		indexSizeBits:     defaultIndexSizeBits,
-		indexFileSize:     defaultIndexFileSize,
-		primaryFileSize:   defaultPrimaryFileSize,
-		syncInterval:      defaultSyncInterval,
-		burstRate:         defaultBurstRate,
-		gcIntervalIndex:   defaultGCIntervalIndex,
-		gcIntervalPrimary: defaultGCIntervalPrimary,
+		indexSizeBits:   defaultIndexSizeBits,
+		indexFileSize:   defaultIndexFileSize,
+		primaryFileSize: defaultPrimaryFileSize,
+		syncInterval:    defaultSyncInterval,
+		burstRate:       defaultBurstRate,
+		gcInterval:      defaultGCInterval,
 	}
 	for _, option := range options {
 		option(&co)
@@ -114,7 +102,7 @@ func OpenHashedBlockstore(ctx context.Context, indexPath string, dataPath string
 	if err != nil {
 		return nil, err
 	}
-	store, err := store.OpenStore(ctx, indexPath, primary, co.indexSizeBits, co.indexFileSize, co.syncInterval, co.burstRate, co.gcIntervalIndex, co.gcIntervalIndex, true)
+	store, err := store.OpenStore(ctx, indexPath, primary, co.indexSizeBits, co.indexFileSize, co.syncInterval, co.burstRate, co.gcInterval, true)
 	if err != nil {
 		return nil, err
 	}

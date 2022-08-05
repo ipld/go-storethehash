@@ -24,7 +24,7 @@ func TestGC(t *testing.T) {
 
 	primary, err := mhprimary.Open(dataPath, 1024)
 	require.NoError(t, err)
-	store, err := store.OpenStore(ctx, indexPath, primary, 0, 0, time.Minute, 10240, 0, time.Hour, false)
+	store, err := store.OpenStore(ctx, indexPath, primary, 0, 0, time.Minute, 10240, time.Hour, false)
 	require.NoError(t, err)
 	defer store.Close()
 	//bs.Start()

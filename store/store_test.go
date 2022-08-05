@@ -25,8 +25,7 @@ const (
 	defaultBurstRate     = 4 * 1024 * 1024
 	defaultSyncInterval  = time.Second
 	// Disable GC for this test.
-	gcIntervalIndex   = 0
-	gcIntervalPrimary = 0
+	gcInterval = 0
 )
 
 func initStore(t *testing.T, dir string, immutable bool) (*store.Store, error) {
@@ -36,7 +35,7 @@ func initStore(t *testing.T, dir string, immutable bool) (*store.Store, error) {
 	if err != nil {
 		return nil, err
 	}
-	store, err := store.OpenStore(context.Background(), indexPath, primary, defaultIndexSizeBits, defaultIndexFileSize, defaultSyncInterval, defaultBurstRate, gcIntervalIndex, gcIntervalPrimary, immutable)
+	store, err := store.OpenStore(context.Background(), indexPath, primary, defaultIndexSizeBits, defaultIndexFileSize, defaultSyncInterval, defaultBurstRate, gcInterval, immutable)
 	if err != nil {
 		_ = primary.Close()
 		return nil, err
@@ -243,7 +242,7 @@ func TestRecoverBadKey(t *testing.T) {
 	dataPath := filepath.Join(tmpDir, "storethehash.data")
 	primary, err := cidprimary.Open(dataPath)
 	require.NoError(t, err)
-	s, err := store.OpenStore(context.Background(), indexPath, primary, defaultIndexSizeBits, defaultIndexFileSize, defaultSyncInterval, defaultBurstRate, gcIntervalIndex, gcIntervalPrimary, false)
+	s, err := store.OpenStore(context.Background(), indexPath, primary, defaultIndexSizeBits, defaultIndexFileSize, defaultSyncInterval, defaultBurstRate, gcInterval, false)
 	require.NoError(t, err)
 
 	t.Logf("Putting blocks")
@@ -259,7 +258,7 @@ func TestRecoverBadKey(t *testing.T) {
 	// Open store again.
 	primary, err = cidprimary.Open(dataPath)
 	require.NoError(t, err)
-	s, err = store.OpenStore(context.Background(), indexPath, primary, defaultIndexSizeBits, defaultIndexFileSize, defaultSyncInterval, defaultBurstRate, gcIntervalIndex, gcIntervalPrimary, false)
+	s, err = store.OpenStore(context.Background(), indexPath, primary, defaultIndexSizeBits, defaultIndexFileSize, defaultSyncInterval, defaultBurstRate, gcInterval, false)
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, s.Close()) })
 
