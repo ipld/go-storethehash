@@ -56,7 +56,7 @@ type GC interface {
 //
 // Specifying 0 for indexSizeBits and indexFileSize results in using their
 // default values. A gcInterval of 0 disables garbage collection.
-func OpenStore(ctx context.Context, path string, primary primary.PrimaryStorage, indexSizeBits uint8, indexFileSize uint32, syncInterval time.Duration, burstRate types.Work, gcInterval time.Duration, immutable bool) (*Store, error) {
+func OpenStore(ctx context.Context, path string, primary primary.PrimaryStorage, indexSizeBits uint8, indexFileSize uint32, syncInterval time.Duration, burstRate types.Work, gcIntervalIndex time.Duration, gcIntervalPrimary time.Duration, immutable bool) (*Store, error) {
 	idx, err := index.Open(ctx, path, primary, indexSizeBits, indexFileSize)
 	if err != nil {
 		return nil, err
@@ -80,14 +80,18 @@ func OpenStore(ctx context.Context, path string, primary primary.PrimaryStorage,
 		immutable:    immutable,
 	}
 
-	if gcInterval == 0 {
-		log.Warn("Index and primary garbage collection disabled")
+	if gcIntervalIndex == 0 {
+		log.Warn("Index garbage collection disabled")
 	} else {
-		store.indexGC = index.NewGC(idx, gcInterval)
+		store.indexGC = index.NewGC(idx, gcIntervalIndex)
+	}
 
+	if gcIntervalPrimary == 0 {
+		log.Warn("Primary garbage collection disabled")
+	} else {
 		mp, ok := primary.(*mhprimary.MultihashPrimary)
 		if ok {
-			store.primaryGC = mhprimary.NewGC(mp, freelist, gcInterval, idx.Update)
+			store.primaryGC = mhprimary.NewGC(mp, freelist, gcIntervalPrimary, idx.Update)
 		}
 	}
 

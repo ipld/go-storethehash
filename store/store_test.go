@@ -19,11 +19,15 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-const defaultIndexSizeBits = uint8(24)
-const defaultIndexFileSize = uint32(1024 * 1024 * 1024)
-const defaultBurstRate = 4 * 1024 * 1024
-const defaultSyncInterval = time.Second
-const defaultGCInterval = 0 //30 * time.Minute
+const (
+	defaultIndexSizeBits = uint8(24)
+	defaultIndexFileSize = uint32(1024 * 1024 * 1024)
+	defaultBurstRate     = 4 * 1024 * 1024
+	defaultSyncInterval  = time.Second
+	// Disable GC for this test.
+	gcIntervalIndex   = 0
+	gcIntervalPrimary = 0
+)
 
 func initStore(t *testing.T, dir string, immutable bool) (*store.Store, error) {
 	indexPath := filepath.Join(dir, "storethehash.index")
@@ -32,7 +36,7 @@ func initStore(t *testing.T, dir string, immutable bool) (*store.Store, error) {
 	if err != nil {
 		return nil, err
 	}
-	store, err := store.OpenStore(context.Background(), indexPath, primary, defaultIndexSizeBits, defaultIndexFileSize, defaultSyncInterval, defaultBurstRate, defaultGCInterval, immutable)
+	store, err := store.OpenStore(context.Background(), indexPath, primary, defaultIndexSizeBits, defaultIndexFileSize, defaultSyncInterval, defaultBurstRate, gcIntervalIndex, gcIntervalPrimary, immutable)
 	if err != nil {
 		_ = primary.Close()
 		return nil, err
@@ -239,7 +243,7 @@ func TestRecoverBadKey(t *testing.T) {
 	dataPath := filepath.Join(tmpDir, "storethehash.data")
 	primary, err := cidprimary.Open(dataPath)
 	require.NoError(t, err)
-	s, err := store.OpenStore(context.Background(), indexPath, primary, defaultIndexSizeBits, defaultIndexFileSize, defaultSyncInterval, defaultBurstRate, defaultGCInterval, false)
+	s, err := store.OpenStore(context.Background(), indexPath, primary, defaultIndexSizeBits, defaultIndexFileSize, defaultSyncInterval, defaultBurstRate, gcIntervalIndex, gcIntervalPrimary, false)
 	require.NoError(t, err)
 
 	t.Logf("Putting blocks")
@@ -255,7 +259,7 @@ func TestRecoverBadKey(t *testing.T) {
 	// Open store again.
 	primary, err = cidprimary.Open(dataPath)
 	require.NoError(t, err)
-	s, err = store.OpenStore(context.Background(), indexPath, primary, defaultIndexSizeBits, defaultIndexFileSize, defaultSyncInterval, defaultBurstRate, defaultGCInterval, false)
+	s, err = store.OpenStore(context.Background(), indexPath, primary, defaultIndexSizeBits, defaultIndexFileSize, defaultSyncInterval, defaultBurstRate, gcIntervalIndex, gcIntervalPrimary, false)
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, s.Close()) })
 
