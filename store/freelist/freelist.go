@@ -170,9 +170,16 @@ func (fl *FreeList) StorageSize() (int64, error) {
 	return fi.Size(), nil
 }
 
-func (cp *FreeList) Rotate() (string, error) {
+// ToGC moves the current freelist file into a ".gc" file and creates a new
+// freelist file. This allows the garbage collector to the process the .gc
+// freelist file while allowing the freelist to continue to operate on a new
+// file.
+func (cp *FreeList) ToGC() (string, error) {
 	fileName := cp.file.Name()
-	workFilePath := fileName + ".work"
+	workFilePath := fileName + ".gc"
+
+	// If a .gc file already exists, return the existing one becuase it means
+	// that GC did not finish processing it.
 	_, err := os.Stat(workFilePath)
 	if !os.IsNotExist(err) {
 		if err != nil {
@@ -189,6 +196,9 @@ func (cp *FreeList) Rotate() (string, error) {
 	cp.flushLock.Lock()
 	defer cp.flushLock.Unlock()
 
+	// Flush any buffered data and close the file. Safe to do with flushLock
+	// acquired.
+	cp.writer.Flush()
 	cp.file.Close()
 	err = os.Rename(fileName, workFilePath)
 	if err != nil {

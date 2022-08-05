@@ -354,20 +354,20 @@ func allZeros(data []byte) bool {
 // processFreeList reads the freelist and marks the locations in primary
 // files as dead by zeroing the data of the dead record.
 func (gc *primaryGC) processFreeList(ctx context.Context) (int, error) {
-	flPath, err := gc.freeList.Rotate()
+	flPath, err := gc.freeList.ToGC()
 	if err != nil {
-		return 0, fmt.Errorf("cannot rotate freelist: %w", err)
+		return 0, fmt.Errorf("cannot get freelist gc file: %w", err)
 	}
 
 	flFile, err := os.OpenFile(flPath, os.O_RDONLY, 0644)
 	if err != nil {
-		return 0, fmt.Errorf("error opening freelist work file: %w", err)
+		return 0, fmt.Errorf("error opening freelist gc file: %w", err)
 	}
 	defer flFile.Close()
 
 	fi, err := flFile.Stat()
 	if err != nil {
-		return 0, fmt.Errorf("cannot stat freelist work file: %w", err)
+		return 0, fmt.Errorf("cannot stat freelist gc file: %w", err)
 	}
 
 	var count int
