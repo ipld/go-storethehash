@@ -467,10 +467,16 @@ func TestIndexHeader(t *testing.T) {
 	assertHeader(t, i1.headerPath, bucketBits)
 
 	// Check that the header doesn't change if the index is opened again.
-	i2, err := Open(context.Background(), indexPath, inmemory.NewInmemory([][2][]byte{}), bucketBits, fileSize)
+	i2, err := Open(context.Background(), indexPath, primaryStorage, bucketBits, fileSize)
 	require.NoError(t, err)
 	t.Cleanup(func() { i2.Close() })
 	assertHeader(t, i2.headerPath, bucketBits)
+
+	// Check that opening a different primary with the same header will return
+	// error. The InMemory primary returns a different Ident response with each
+	// InMemory instance.
+	_, err = Open(context.Background(), indexPath, inmemory.NewInmemory([][2][]byte{}), bucketBits, fileSize)
+	require.Error(t, err)
 }
 
 func TestIndexGetBad(t *testing.T) {

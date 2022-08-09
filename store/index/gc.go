@@ -24,6 +24,10 @@ type indexGC struct {
 	// Checkpoint is the last bucket index still in use by first file.
 	checkpoint  bool
 	bucketIndex BucketIndex
+
+	// GC stats
+	cycleCount     int64
+	bytesCollected int64
 }
 
 func NewGC(index *Index, gcInterval time.Duration) *indexGC {
@@ -94,9 +98,9 @@ func (gc *indexGC) run(gcInterval time.Duration) {
 					return
 				}
 				if fileCount == 0 {
-					log.Info("GC finished, no index files to remove")
+					log.Infow("GC finished, no index files to remove", "bytesCollected", gc.bytesCollected, "gcCycles", gc.cycleCount)
 				} else {
-					log.Infow("GC finished, removed index files", "fileCount", fileCount)
+					log.Infow("GC finished, removed index files", "fileCount", fileCount, "bytesCollected", gc.bytesCollected, "gcCycles", gc.cycleCount)
 				}
 			}()
 		case <-gcDone:
@@ -113,6 +117,8 @@ func (gc *indexGC) run(gcInterval time.Duration) {
 func (gc *indexGC) Cycle(ctx context.Context) (int, error) {
 	gc.cycleLock.Lock()
 	defer gc.cycleLock.Unlock()
+
+	gc.cycleCount++
 
 	header, err := readHeader(gc.index.headerPath)
 	if err != nil {
@@ -156,11 +162,16 @@ func (gc *indexGC) Cycle(ctx context.Context) (int, error) {
 		if err != nil {
 			return 0, err
 		}
+		fi, err := os.Stat(indexPath)
+		if err != nil {
+			return 0, fmt.Errorf("cannot stat index file to remove: %w", err)
+		}
 		// If updating index info ok, then remove stale index file.
 		err = os.Remove(indexPath)
 		if err != nil {
 			return 0, err
 		}
+		gc.bytesCollected += fi.Size()
 		count++
 	}
 

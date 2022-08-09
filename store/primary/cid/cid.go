@@ -267,4 +267,8 @@ func (cp *CIDPrimary) StorageSize() (int64, error) {
 	return fi.Size(), nil
 }
 
+func (cp *CIDPrimary) Ident() string {
+	return "cid"
+}
+
 var _ primary.PrimaryStorage = &CIDPrimary{}

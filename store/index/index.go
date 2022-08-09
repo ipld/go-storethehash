@@ -13,6 +13,7 @@ import (
 	"sync"
 
 	"github.com/ipld/go-storethehash/store/primary"
+	mhprimary "github.com/ipld/go-storethehash/store/primary/multihash"
 	"github.com/ipld/go-storethehash/store/types"
 )
 
@@ -106,6 +107,10 @@ type Header struct {
 	MaxFileSize uint32
 	// First index file number
 	FirstFile uint32
+	// Primary is a string that identifies a primary type. If the primary gives
+	// a different ident than is in the header, then the index is not valid for
+	// the primary.
+	Primary string
 }
 
 func newHeader(bucketsBits byte, maxFileSize uint32) Header {
@@ -167,6 +172,8 @@ func Open(ctx context.Context, path string, primary primary.PrimaryStorage, inde
 		return nil, err
 	}
 
+	primaryIdent := primary.Ident()
+
 	var lastIndexNum uint32
 	header, err := readHeader(headerPath)
 	if os.IsNotExist(err) {
@@ -177,6 +184,10 @@ func Open(ctx context.Context, path string, primary primary.PrimaryStorage, inde
 	} else {
 		if err != nil {
 			return nil, err
+		}
+
+		if header.Primary != "" && primaryIdent != header.Primary {
+			return nil, fmt.Errorf("wrong primary type - was previously %s and is now %s", header.Primary, primaryIdent)
 		}
 
 		if header.BucketsBits != indexSizeBits {
@@ -207,7 +218,7 @@ func Open(ctx context.Context, path string, primary primary.PrimaryStorage, inde
 		return nil, err
 	}
 
-	return &Index{
+	idx := &Index{
 		sizeBits:    indexSizeBits,
 		maxFileSize: maxFileSize,
 		buckets:     buckets,
@@ -221,7 +232,75 @@ func Open(ctx context.Context, path string, primary primary.PrimaryStorage, inde
 		nextPool:    make(bucketPool, bucketPoolSize),
 		length:      types.Position(fi.Size()),
 		basePath:    path,
-	}, nil
+	}
+
+	if header.Primary == "" {
+		mp, ok := primary.(*mhprimary.MultihashPrimary)
+		if ok {
+			if err = idx.remapIndex(mp); err != nil {
+				return nil, err
+			}
+		}
+		header.Primary = primaryIdent
+		if err = writeHeader(headerPath, header); err != nil {
+			return nil, err
+		}
+	}
+
+	return idx, nil
+}
+
+func (idx *Index) remapIndex(mp *mhprimary.MultihashPrimary) error {
+	log.Infow("Remapping primary offsets in index")
+	firstPrimaryFile, maxPrimaryFileSize, primarySizes, err := mp.GetFileInfo()
+	if err != nil {
+		return fmt.Errorf("cannot get info for primary files: %w", err)
+	}
+
+	var count int
+	for i, bucketPos := range idx.buckets {
+		// Log progress.
+		if bucketPos == 0 {
+			// Skip empty bucket.
+			continue
+		}
+
+		localPos, fileNum := localizeBucketPos(bucketPos, idx.maxFileSize)
+
+		fileName := indexFileName(idx.basePath, fileNum)
+		file, err := os.OpenFile(fileName, os.O_RDWR, 0644)
+		if err != nil {
+			return fmt.Errorf("remap cannot open index file %s: %w", fileName, err)
+		}
+		defer file.Close()
+
+		// Read the record list from disk and get the file offset of that key in
+		// the primary storage.
+		data := make([]byte, idx.sizeBuckets[i])
+		if _, err = file.ReadAt(data, int64(localPos)); err != nil {
+			return fmt.Errorf("cannot read record list from index file %s: %w", fileName, err)
+		}
+		records := NewRecordList(data)
+		recIter := records.Iter()
+		for !recIter.Done() {
+			record := recIter.Next()
+			offset, err := mhprimary.RemapOffset(record.Block.Offset, firstPrimaryFile, maxPrimaryFileSize, primarySizes)
+			if err != nil {
+				return err
+			}
+			binary.LittleEndian.PutUint64(records[record.Pos:], uint64(offset))
+			count++
+		}
+		if _, err = file.WriteAt(data, int64(localPos)); err != nil {
+			return fmt.Errorf("failed to remap primary offset in index file %s: %w", fileName, err)
+		}
+		if err = file.Close(); err != nil {
+			log.Errorw("Error closeing remapped index file", "err", err, "path", fileName)
+		}
+	}
+
+	log.Infow("Remapped primary offsets", "count", count)
+	return nil
 }
 
 func indexFileName(basePath string, fileNum uint32) string {

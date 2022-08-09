@@ -21,16 +21,16 @@ func NewBuckets(indexSizeBits uint8) (Buckets, error) {
 
 // Put updates a bucket value
 func (b Buckets) Put(index BucketIndex, offset types.Position) error {
-	if int(index) > len(b)-1 {
+	if int(index) >= len(b) {
 		return types.ErrOutOfBounds
 	}
 	b[int(index)] = offset
 	return nil
 }
 
-// Get updates returns the value at the given index
+// Get returns the value at the given index
 func (b Buckets) Get(index BucketIndex) (types.Position, error) {
-	if int(index) > len(b)-1 {
+	if int(index) >= len(b) {
 		return 0, types.ErrOutOfBounds
 	}
 	return b[int(index)], nil
@@ -52,7 +52,7 @@ func NewSizeBuckets(indexSizeBits uint8) (SizeBuckets, error) {
 
 // Put updates a bucket value
 func (b SizeBuckets) Put(index BucketIndex, offset types.Size) error {
-	if int(index) > len(b)-1 {
+	if int(index) >= len(b) {
 		return types.ErrOutOfBounds
 	}
 	b[int(index)] = offset
@@ -61,7 +61,7 @@ func (b SizeBuckets) Put(index BucketIndex, offset types.Size) error {
 
 // Get updates returns the value at the given index
 func (b SizeBuckets) Get(index BucketIndex) (types.Size, error) {
-	if int(index) > len(b)-1 {
+	if int(index) >= len(b) {
 		return 0, types.ErrOutOfBounds
 	}
 	return b[int(index)], nil

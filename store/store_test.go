@@ -31,11 +31,15 @@ const (
 func initStore(t *testing.T, dir string, immutable bool) (*store.Store, error) {
 	indexPath := filepath.Join(dir, "storethehash.index")
 	dataPath := filepath.Join(dir, "storethehash.data")
+	freeList, err := freelist.Open(indexPath + ".free")
+	if err != nil {
+		return nil, err
+	}
 	primary, err := cidprimary.Open(dataPath)
 	if err != nil {
 		return nil, err
 	}
-	store, err := store.OpenStore(context.Background(), indexPath, primary, defaultIndexSizeBits, defaultIndexFileSize, defaultSyncInterval, defaultBurstRate, gcInterval, immutable)
+	store, err := store.OpenStore(context.Background(), indexPath, primary, freeList, defaultIndexSizeBits, defaultIndexFileSize, defaultSyncInterval, defaultBurstRate, gcInterval, immutable)
 	if err != nil {
 		_ = primary.Close()
 		return nil, err
@@ -240,9 +244,10 @@ func TestRecoverBadKey(t *testing.T) {
 	tmpDir := t.TempDir()
 	indexPath := filepath.Join(tmpDir, "storethehash.index")
 	dataPath := filepath.Join(tmpDir, "storethehash.data")
-	primary, err := cidprimary.Open(dataPath)
+	freeList, err := freelist.Open(indexPath + ".free")
 	require.NoError(t, err)
-	s, err := store.OpenStore(context.Background(), indexPath, primary, defaultIndexSizeBits, defaultIndexFileSize, defaultSyncInterval, defaultBurstRate, gcInterval, false)
+	primary, err := cidprimary.Open(dataPath)
+	s, err := store.OpenStore(context.Background(), indexPath, primary, freeList, defaultIndexSizeBits, defaultIndexFileSize, defaultSyncInterval, defaultBurstRate, gcInterval, false)
 	require.NoError(t, err)
 
 	t.Logf("Putting blocks")
@@ -256,9 +261,11 @@ func TestRecoverBadKey(t *testing.T) {
 	require.NoError(t, err)
 
 	// Open store again.
+	freeList, err = freelist.Open(indexPath + ".free")
+	require.NoError(t, err)
 	primary, err = cidprimary.Open(dataPath)
 	require.NoError(t, err)
-	s, err = store.OpenStore(context.Background(), indexPath, primary, defaultIndexSizeBits, defaultIndexFileSize, defaultSyncInterval, defaultBurstRate, gcInterval, false)
+	s, err = store.OpenStore(context.Background(), indexPath, primary, freeList, defaultIndexSizeBits, defaultIndexFileSize, defaultSyncInterval, defaultBurstRate, gcInterval, false)
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, s.Close()) })
 

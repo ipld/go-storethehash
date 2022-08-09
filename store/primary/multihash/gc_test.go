@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/ipld/go-storethehash/store"
+	"github.com/ipld/go-storethehash/store/freelist"
 	mhprimary "github.com/ipld/go-storethehash/store/primary/multihash"
 	"github.com/ipld/go-storethehash/store/testutil"
 	"github.com/ipld/go-storethehash/store/types"
@@ -19,15 +20,18 @@ func TestGC(t *testing.T) {
 	tempDir := t.TempDir()
 	indexPath := filepath.Join(tempDir, "storethehash.index")
 	dataPath := filepath.Join(tempDir, "storethehash.data")
+	freeListPath := indexPath + ".free"
 
 	t.Logf("Creating store in directory %s\n", tempDir)
 
-	primary, err := mhprimary.Open(dataPath, 1024)
+	freeList, err := freelist.Open(freeListPath)
 	require.NoError(t, err)
-	store, err := store.OpenStore(ctx, indexPath, primary, 0, 0, time.Minute, 10240, time.Hour, false)
+
+	primary, err := mhprimary.Open(dataPath, 1024, freeList)
+	require.NoError(t, err)
+	store, err := store.OpenStore(ctx, indexPath, primary, freeList, 0, 0, time.Minute, 10240, time.Hour, false)
 	require.NoError(t, err)
 	defer store.Close()
-	//bs.Start()
 
 	blks := testutil.GenerateBlocksOfSize(9, 250)
 

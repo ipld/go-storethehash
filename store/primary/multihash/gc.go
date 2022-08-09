@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"sync"
 	"time"
 
@@ -26,6 +27,10 @@ type primaryGC struct {
 	lowUse    map[uint32]struct{}
 
 	updateIndex UpdateIndexFunc
+
+	// GC stats
+	cycleCount     int64
+	bytesCollected int64
 }
 
 type UpdateIndexFunc func([]byte, types.Block) error
@@ -69,7 +74,7 @@ func (gc *primaryGC) run(gcInterval time.Duration) {
 	hasUpdate := true
 
 	// Run 1st GC 5 minute after startup.
-	t := time.NewTimer(5 * time.Minute)
+	t := time.NewTimer(15 * time.Second) //5 * time.Minute)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -87,8 +92,8 @@ func (gc *primaryGC) run(gcInterval time.Duration) {
 			}
 			hasUpdate = true
 		case <-t.C:
-			if !hasUpdate {
-				// Nothing new, keep waiting.
+			if !hasUpdate && len(gc.lowUse) == 0 {
+				// Nothing new, nothing to evaporate, keep waiting.
 				t.Reset(gcInterval)
 				continue
 			}
@@ -103,9 +108,9 @@ func (gc *primaryGC) run(gcInterval time.Duration) {
 					return
 				}
 				if fileCount == 0 {
-					log.Info("GC finished, no primary files to remove")
+					log.Infow("GC finished, no primary files to remove", "bytesCollected", gc.bytesCollected, "gcCycles", gc.cycleCount)
 				} else {
-					log.Infow("GC finished, removed primary files", "fileCount", fileCount)
+					log.Infow("GC finished, removed primary files", "fileCount", fileCount, "bytesCollected", gc.bytesCollected, "gcCycles", gc.cycleCount)
 				}
 			}()
 		case <-gcDone:
@@ -123,11 +128,12 @@ func (gc *primaryGC) Cycle(ctx context.Context) (int, error) {
 	gc.cycleLock.Lock()
 	defer gc.cycleLock.Unlock()
 
-	flCount, err := gc.processFreeList(ctx)
+	gc.cycleCount++
+
+	flCount, err := processFreeList(ctx, gc.freeList, gc.primary.basePath, gc.primary.maxFileSize)
 	if err != nil {
 		return 0, fmt.Errorf("cannot process freelist: %w", err)
 	}
-	log.Infow("Processed freelist", "records", flCount)
 
 	header, err := readHeader(gc.primary.headerPath)
 	if err != nil {
@@ -136,13 +142,13 @@ func (gc *primaryGC) Cycle(ctx context.Context) (int, error) {
 
 	var delCount int
 
-	// If no new freelist entries, evaporate the low use files.
-	if flCount == 0 {
+	// If no new freelist entries, and not first run, evaporate the low use files.
+	if flCount == 0 && gc.cycleCount != 1 {
 		for fileNum := range gc.lowUse {
 			deleted, err := gc.reapFile(ctx, fileNum, &header)
 			if err != nil {
 				fileName := primaryFileName(gc.primary.basePath, fileNum)
-				return 0, fmt.Errorf("cannot reap low-use  primary file %s: %w", fileName, err)
+				return 0, fmt.Errorf("cannot reap low-use primary file %s: %w", fileName, err)
 			}
 			if deleted {
 				delete(gc.lowUse, fileNum)
@@ -160,6 +166,7 @@ func (gc *primaryGC) Cycle(ctx context.Context) (int, error) {
 			return 0, fmt.Errorf("cannot reap primary file %s: %w", fileName, err)
 		}
 		if deleted {
+			delete(gc.lowUse, fileNum)
 			delCount++
 		}
 	}
@@ -176,6 +183,7 @@ func (gc *primaryGC) reapFile(ctx context.Context, fileNum uint32, header *Heade
 	if err != nil {
 		return false, fmt.Errorf("cannot reap dead primary records: %w", err)
 	}
+
 	if dead && fileNum == header.FirstFile {
 		header.FirstFile++
 		err = writeHeader(gc.primary.headerPath, *header)
@@ -183,11 +191,12 @@ func (gc *primaryGC) reapFile(ctx context.Context, fileNum uint32, header *Heade
 			return false, fmt.Errorf("cannot write header: %w", err)
 		}
 		fileName := primaryFileName(gc.primary.basePath, fileNum)
+
 		err = os.Remove(fileName)
 		if err != nil {
-			return false, fmt.Errorf("cannot remove primary file %s: %w", fileName, err)
+			return false, fmt.Errorf("cannot remove primary file %s: %w", filepath.Base(fileName), err)
 		}
-		log.Infow("Removed stale primary file", "path", fileName)
+		log.Infow("Removed stale primary file", "file", filepath.Base(fileName))
 		return true, nil
 	}
 
@@ -201,13 +210,17 @@ func (gc *primaryGC) reapRecords(ctx context.Context, fileNum uint32) (bool, err
 	if err != nil {
 		return false, fmt.Errorf("cannot open primary file: %w", err)
 	}
+	//defer file.Seek(0, io.SeekEnd)
 	defer file.Close()
 
 	fi, err := file.Stat()
 	if err != nil {
 		return false, fmt.Errorf("cannot stat primary file: %w", err)
 	}
+	fileName := filepath.Base(file.Name())
 	if fi.Size() == 0 {
+		// File was already truncated to 0 size, but was not yet removed.
+		log.Debugw("Primary file is already empty", "file", fileName)
 		return true, nil
 	}
 
@@ -215,6 +228,7 @@ func (gc *primaryGC) reapRecords(ctx context.Context, fileNum uint32) (bool, err
 	var busyAt, freeAt, prevBusyAt int64
 	var busySize, prevBusySize int64
 	freeAt = -1
+	busyAt = -1
 	prevBusyAt = -1
 
 	// See if any entries can be truncated
@@ -250,7 +264,8 @@ func (gc *primaryGC) reapRecords(ctx context.Context, fileNum uint32) (bool, err
 		if allZeros(data) {
 			// Record is deleted.
 			freeCount++
-			if busyAt > freeAt {
+			// Only update freeAt if there is a busy record after it.
+			if busyAt >= freeAt {
 				freeAt = pos
 				if busyAt == freeAt {
 					busyAt = prevBusyAt
@@ -275,6 +290,10 @@ func (gc *primaryGC) reapRecords(ctx context.Context, fileNum uint32) (bool, err
 		if err = file.Truncate(freeAt); err != nil {
 			return false, err
 		}
+		collected := sizeBefore - freeAt
+		log.Infow("Truncated primary file", "bytesCollected", collected, "file", fileName)
+		gc.bytesCollected += collected
+
 		if freeAt == 0 {
 			// Entire primary is free.
 			return true, nil
@@ -285,7 +304,6 @@ func (gc *primaryGC) reapRecords(ctx context.Context, fileNum uint32) (bool, err
 				return false, fmt.Errorf("cannot seek primary: %w", err)
 			}
 		}
-		log.Infow("Truncated primary file", "bytesCut", sizeBefore-freeAt, "path", file.Name())
 	}
 
 	// If only known busy location was freed, but file is not empty, then start
@@ -294,10 +312,11 @@ func (gc *primaryGC) reapRecords(ctx context.Context, fileNum uint32) (bool, err
 		return false, nil
 	}
 
-	// If less than 25% of the records in the file are still used, rewrite the
-	// last 2 record still in use into a later primary. This will allow low-use
-	// primary files to evaporate over time.
-	if freeCount >= busyCount*3 {
+	// If more that 75% of the records in the file are free, rewrite the last 2
+	// records. that are still in use, into a later primary. This will allow
+	// low-use primary files to evaporate over time.
+	log.Debugf("%s freecount=%d busycount=%d", fileName, freeCount, busyCount)
+	if 4*freeCount >= 3*(freeCount+busyCount) {
 		for busyAt >= 0 {
 			if ctx.Err() != nil {
 				return false, ctx.Err()
@@ -331,7 +350,7 @@ func (gc *primaryGC) reapRecords(ctx context.Context, fileNum uint32) (bool, err
 			if err = gc.updateIndex(indexKey, fileOffset); err != nil {
 				return false, fmt.Errorf("cannot update index with new record location: %w", err)
 			}
-			log.Infow("Moved record from low-use file", "from", file.Name())
+			log.Infow("Moved record from end of low-use file", "from", fileName)
 
 			// Do not truncate file here, because moved record may not be
 			// written yet. Instead put moved record onto freelist and let next
@@ -366,8 +385,8 @@ func allZeros(data []byte) bool {
 
 // processFreeList reads the freelist and marks the locations in primary
 // files as dead by zeroing the data of the dead record.
-func (gc *primaryGC) processFreeList(ctx context.Context) (int, error) {
-	flPath, err := gc.freeList.ToGC()
+func processFreeList(ctx context.Context, freeList *freelist.FreeList, basePath string, maxFileSize uint32) (int, error) {
+	flPath, err := freeList.ToGC()
 	if err != nil {
 		return 0, fmt.Errorf("cannot get freelist gc file: %w", err)
 	}
@@ -384,8 +403,9 @@ func (gc *primaryGC) processFreeList(ctx context.Context) (int, error) {
 	}
 
 	var count int
+	// If the freelist size is non-zero, then process its records.
 	if fi.Size() != 0 {
-		flIter := freelist.NewIter(flFile)
+		flIter := freelist.NewIter(bufio.NewReader(flFile))
 		for {
 			free, err := flIter.Next()
 			if err != nil {
@@ -396,13 +416,16 @@ func (gc *primaryGC) processFreeList(ctx context.Context) (int, error) {
 			}
 
 			// Mark dead location with tombstone by zeroing the record's data.
-			err = gc.primary.zeroRecord(free.Offset, free.Size)
+			err = zeroRecord(free.Offset, free.Size, basePath, maxFileSize)
 			if err != nil {
-				return 0, fmt.Errorf("gc cannot zero primary record: %w", err)
+				log.Errorw("GC cannot zero primary record", "err", err)
+				continue
 			}
-
 			count++
 		}
+	}
+	if count > 0 {
+		log.Infow("GC marked primary records from freelist as deleted", "count", count)
 	}
 
 	flFile.Close()
@@ -412,4 +435,50 @@ func (gc *primaryGC) processFreeList(ctx context.Context) (int, error) {
 	}
 
 	return count, nil
+}
+
+func zeroRecord(pos types.Position, size types.Size, basePath string, maxFileSize uint32) error {
+	var localPos types.Position
+	var fileName string
+	if maxFileSize == 0 {
+		// Not split into separate files.
+		localPos = pos
+		fileName = basePath
+	} else {
+		var fileNum uint32
+		localPos, fileNum = localizePrimaryPos(pos, maxFileSize)
+		fileName = primaryFileName(basePath, fileNum)
+	}
+
+	file, err := os.OpenFile(fileName, os.O_RDWR, 0644)
+	if err != nil {
+		return fmt.Errorf("cannot open primary file %s: %w", fileName, err)
+	}
+	defer file.Close()
+
+	fi, err := file.Stat()
+	if err != nil {
+		return fmt.Errorf("cannot stat primary file %s: %w", fileName, err)
+	}
+	if localPos > types.Position(fi.Size()) {
+		return fmt.Errorf("freelist record has out-of-range primary offset, offset=%d, fileSize=%d", localPos, fi.Size())
+	}
+
+	sizeBuffer := make([]byte, sizePrefixSize)
+	if _, err = file.ReadAt(sizeBuffer, int64(localPos)); err != nil {
+		return err
+	}
+	recSize := binary.LittleEndian.Uint32(sizeBuffer)
+	if types.Size(recSize) != size {
+		return fmt.Errorf("record size (%d) in primary %s does not match size in freelist (%d), pos=%d", recSize, fileName, size, localPos)
+	}
+
+	zeros := make([]byte, size)
+	_, err = file.WriteAt(zeros, int64(localPos+sizePrefixSize))
+	if err != nil {
+		return fmt.Errorf("cannot write to primary file %s: %w", fileName, err)
+	}
+
+	log.Debugw("Zeroed record", "file", fileName, "pos", localPos, "size", size)
+	return nil
 }

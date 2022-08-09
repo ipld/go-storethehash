@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/ipld/go-storethehash/store/freelist"
 	"github.com/ipld/go-storethehash/store/types"
 	"github.com/stretchr/testify/require"
 )
@@ -40,13 +41,21 @@ func TestUpgradePrimary(t *testing.T) {
 	err = copyFile(testPrimaryPath, newPrimaryPath)
 	require.NoError(t, err)
 
+	newFreeListPath := filepath.Join(t.TempDir(), "storethehash.index.free")
+	freeList, err := freelist.Open(newFreeListPath)
+	require.NoError(t, err)
+
 	// Do the upgrade to split the primary into multiple files.
 	headerPath := newPrimaryPath + ".info"
-	lastChunkNum, err := upgradePrimary(context.Background(), newPrimaryPath, headerPath, testFileSizeLimit)
+	updated, err := upgradePrimary(context.Background(), newPrimaryPath, headerPath, testFileSizeLimit, freeList)
+	require.NoError(t, err)
+	require.True(t, updated)
+
+	lastChunkNum, err := findLastPrimary(newPrimaryPath, 0)
 	require.NoError(t, err)
 
 	t.Logf("Split old primary into %d files", lastChunkNum)
-	require.Equal(t, lastChunkNum, 198)
+	require.Equal(t, int(lastChunkNum), 198)
 
 	// Make sure original file was removed.
 	_, err = os.Stat(newPrimaryPath)
@@ -74,7 +83,7 @@ func TestUpgradePrimary(t *testing.T) {
 		lastFileNum = fileNum
 		fileNum++
 	}
-	require.Equal(t, int(lastFileNum), lastChunkNum)
+	require.Equal(t, lastFileNum, lastChunkNum)
 
 	t.Log("Compare old to new records")
 	require.Equal(t, len(oldRecs), len(newRecs))
@@ -90,17 +99,17 @@ func TestUpgradePrimary(t *testing.T) {
 	require.Equal(t, header.MaxFileSize, uint32(testFileSizeLimit))
 	require.Equal(t, header.FirstFile, uint32(0))
 
-	_, err = Open(newPrimaryPath, 0)
+	_, err = Open(newPrimaryPath, 0, nil)
 	require.Equal(t, err, types.ErrPrimaryWrongFileSize{testFileSizeLimit, defaultMaxFileSize})
 
-	mp, err := Open(newPrimaryPath, testFileSizeLimit)
+	mp, err := Open(newPrimaryPath, testFileSizeLimit, nil)
 	require.NoError(t, err)
 	require.NoError(t, mp.Close())
 
 	// Run upgrade again to make sure it does nothing.
-	lastChunkNum, err = upgradePrimary(context.Background(), newPrimaryPath, headerPath, testFileSizeLimit)
+	updated, err = upgradePrimary(context.Background(), newPrimaryPath, headerPath, testFileSizeLimit, freeList)
 	require.NoError(t, err)
-	require.Equal(t, lastChunkNum, 0)
+	require.False(t, updated)
 }
 
 func testScanPrimaryFile(file *os.File) ([][]byte, error) {

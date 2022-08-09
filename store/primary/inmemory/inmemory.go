@@ -1,7 +1,9 @@
 package inmemory
 
 import (
+	"fmt"
 	"io"
+	"time"
 
 	"github.com/ipld/go-storethehash/store/primary"
 	"github.com/ipld/go-storethehash/store/types"
@@ -11,25 +13,30 @@ import (
 //!
 //! It's using a vector of tuples containing the key-value pairs.
 
-type InMemory [][2][]byte
+type InMemory struct {
+	pairs [][2][]byte
+	ident string
+}
 
 func NewInmemory(data [][2][]byte) *InMemory {
-	value := InMemory(data)
-	return &value
+	return &InMemory{
+		pairs: data,
+		ident: fmt.Sprint("inmemory-", time.Now().UnixNano()),
+	}
 }
 
 func (im *InMemory) Get(blk types.Block) (key []byte, value []byte, err error) {
-	max := len(*im)
+	max := len(im.pairs)
 	if blk.Offset >= types.Position(max) {
 		return nil, nil, types.ErrOutOfBounds
 	}
-	val := (*im)[blk.Offset]
+	val := im.pairs[blk.Offset]
 	return val[0], val[1], nil
 }
 
 func (im *InMemory) Put(key []byte, value []byte) (blk types.Block, err error) {
-	pos := len(*im)
-	*im = append(*im, [2][]byte{key, value})
+	pos := len(im.pairs)
+	im.pairs = append(im.pairs, [2][]byte{key, value})
 	return types.Block{Offset: types.Position(pos), Size: 1}, nil
 }
 
@@ -81,6 +88,12 @@ func (imi *inMemoryIter) Next() ([]byte, []byte, error) {
 
 func (im *InMemory) StorageSize() (int64, error) {
 	return 0, nil
+}
+
+// Ident always returns a different value per InMemory instance because the
+// existing index is invalid if used with a new InMemory instance.
+func (im *InMemory) Ident() string {
+	return im.ident
 }
 
 var _ primary.PrimaryStorage = &InMemory{}

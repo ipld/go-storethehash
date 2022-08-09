@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/ipld/go-storethehash/store/freelist"
 	mhprimary "github.com/ipld/go-storethehash/store/primary/multihash"
 	"github.com/stretchr/testify/require"
 )
@@ -20,8 +21,11 @@ func TestGC(t *testing.T) {
 	err := copyFile(testIndexPath, indexPath)
 	require.NoError(t, err)
 
+	freeList, err := freelist.Open(testIndexPath + ".free")
+	require.NoError(t, err)
+
 	dataPath := filepath.Join(tempDir, "storethehash.data")
-	primary, err := mhprimary.Open(dataPath, 0)
+	primary, err := mhprimary.Open(dataPath, 0, freeList)
 	require.NoError(t, err)
 	defer primary.Close()
 

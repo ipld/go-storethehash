@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"encoding/binary"
 	"fmt"
+	"io"
 	"os"
 	"sync"
 
@@ -129,31 +130,24 @@ func (cp *FreeList) Iter() (*Iterator, error) {
 	return NewIter(cp.file), nil
 }
 
-func NewIter(reader *os.File) *Iterator {
-	return &Iterator{reader, 0}
+func NewIter(reader io.Reader) *Iterator {
+	return &Iterator{
+		reader: reader,
+	}
 }
 
 type Iterator struct {
-	reader *os.File
-	pos    types.Position
+	reader io.Reader
 }
 
 func (cpi *Iterator) Next() (*types.Block, error) {
-	sizeBuf := make([]byte, types.SizeBytesLen)
-	offBuf := make([]byte, types.OffBytesLen)
-	_, err := cpi.reader.ReadAt(offBuf, int64(cpi.pos))
+	data := make([]byte, types.OffBytesLen+types.SizeBytesLen)
+	_, err := io.ReadFull(cpi.reader, data)
 	if err != nil {
 		return nil, err
 	}
-	cpi.pos += types.OffBytesLen
-	offset := binary.LittleEndian.Uint64(offBuf)
-
-	_, err = cpi.reader.ReadAt(sizeBuf, int64(cpi.pos))
-	if err != nil {
-		return nil, err
-	}
-	cpi.pos += types.SizeBytesLen
-	size := binary.LittleEndian.Uint32(sizeBuf)
+	offset := binary.LittleEndian.Uint64(data)
+	size := binary.LittleEndian.Uint32(data[types.OffBytesLen:])
 	return &types.Block{Size: types.Size(size), Offset: types.Position(offset)}, nil
 }
 

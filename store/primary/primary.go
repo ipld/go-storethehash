@@ -32,6 +32,11 @@ type PrimaryStorage interface {
 	Iter() (PrimaryStorageIter, error)
 
 	StorageSize() (int64, error)
+
+	// Ident identifies the type of primary (e.g. "multihash") and any other
+	// information that if different from the previous value would invalidate
+	// the index.
+	Ident() string
 }
 
 type PrimaryStorageIter interface {

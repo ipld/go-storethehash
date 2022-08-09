@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"sync"
 
+	"github.com/ipld/go-storethehash/store/freelist"
 	"github.com/ipld/go-storethehash/store/primary"
 	"github.com/ipld/go-storethehash/store/types"
 	"github.com/multiformats/go-multihash"
@@ -100,14 +101,14 @@ func newBlockPool() blockPool {
 // version primary, then it is automatically upgraded.
 //
 // Specifying 0 for maxFileSize results in using the default value.
-func Open(path string, maxFileSize uint32) (*MultihashPrimary, error) {
+func Open(path string, maxFileSize uint32, freeList *freelist.FreeList) (*MultihashPrimary, error) {
 	headerPath := filepath.Clean(path) + ".info"
 
 	if maxFileSize == 0 {
 		maxFileSize = defaultMaxFileSize
 	}
 
-	_, err := upgradePrimary(context.Background(), path, headerPath, maxFileSize)
+	_, err := upgradePrimary(context.Background(), path, headerPath, maxFileSize, freeList)
 	if err != nil {
 		return nil, err
 	}
@@ -495,6 +496,11 @@ func (cp *MultihashPrimary) StorageSize() (int64, error) {
 	return size, nil
 }
 
+// Ident includes file size, since changing this would invalidate the index.
+func (cp *MultihashPrimary) Ident() string {
+	return fmt.Sprint("multihash-", cp.maxFileSize)
+}
+
 // Only reads the size prefix of the data and returns it.
 func readSizePrefix(reader io.Reader) (uint32, error) {
 	sizeBuffer := make([]byte, sizePrefixSize)
@@ -574,21 +580,30 @@ func findLastPrimary(basePath string, fileNum uint32) (uint32, error) {
 	return lastFound, nil
 }
 
-func (mp *MultihashPrimary) zeroRecord(pos types.Position, size types.Size) error {
-	localPos, fileNum := localizePrimaryPos(pos, mp.maxFileSize)
-	fileName := primaryFileName(mp.basePath, fileNum)
-	file, err := os.OpenFile(fileName, os.O_WRONLY, 0644)
+func (cp *MultihashPrimary) GetFileInfo() (uint32, uint32, []int64, error) {
+	header, err := readHeader(cp.headerPath)
 	if err != nil {
-		return fmt.Errorf("cannot open primary file %s: %w", fileName, err)
+		return 0, 0, nil, err
 	}
-	defer file.Close()
-
-	zeros := make([]byte, size)
-
-	_, err = file.WriteAt(zeros, int64(localPos+sizePrefixSize))
+	sizes, err := cp.getFileSizes(header.FirstFile)
 	if err != nil {
-		return fmt.Errorf("cannot write to primary file %s: %w", fileName, err)
+		return 0, 0, nil, err
 	}
+	return header.FirstFile, cp.maxFileSize, sizes, nil
+}
 
-	return nil
+func (cp *MultihashPrimary) getFileSizes(fileNum uint32) ([]int64, error) {
+	var sizes []int64
+	for {
+		fi, err := os.Stat(primaryFileName(cp.basePath, fileNum))
+		if err != nil {
+			if os.IsNotExist(err) {
+				break
+			}
+			return nil, err
+		}
+		sizes = append(sizes, fi.Size())
+		fileNum++
+	}
+	return sizes, nil
 }
