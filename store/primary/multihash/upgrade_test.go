@@ -44,6 +44,7 @@ func TestUpgradePrimary(t *testing.T) {
 	newFreeListPath := filepath.Join(t.TempDir(), "storethehash.index.free")
 	freeList, err := freelist.Open(newFreeListPath)
 	require.NoError(t, err)
+	defer freeList.Close()
 
 	// Do the upgrade to split the primary into multiple files.
 	headerPath := newPrimaryPath + ".info"
