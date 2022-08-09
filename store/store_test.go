@@ -247,6 +247,7 @@ func TestRecoverBadKey(t *testing.T) {
 	freeList, err := freelist.Open(indexPath + ".free")
 	require.NoError(t, err)
 	primary, err := cidprimary.Open(dataPath)
+	require.NoError(t, err)
 	s, err := store.OpenStore(context.Background(), indexPath, primary, freeList, defaultIndexSizeBits, defaultIndexFileSize, defaultSyncInterval, defaultBurstRate, gcInterval, false)
 	require.NoError(t, err)
 
