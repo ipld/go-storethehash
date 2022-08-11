@@ -29,14 +29,13 @@ func upgradePrimary(ctx context.Context, filePath, headerPath string, maxFileSiz
 		// the garbage collector function to process the freelist and make the
 		// primary records deleted. This is safer because it can be re-applied
 		// if there is a failure during this phase.
-		log.Infof("Applying freelist to primary storage.")
 		_, err := processFreeList(ctx, freeList, filePath, 0)
 		if err != nil {
 			return false, fmt.Errorf("could not apply freelist to primary: %w", err)
 		}
 	}
 
-	log.Infof("Upgrading primary storage to version %s. Splitting primary into %d byte files.", PrimaryVersion, maxFileSize)
+	log.Infow("Upgrading primary storage and splitting into separate files", "newVersion", PrimaryVersion, "fileSize", maxFileSize)
 	inFile, err := os.Open(filePath)
 	if err != nil {
 		if os.IsNotExist(err) {

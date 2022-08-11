@@ -391,20 +391,24 @@ func processFreeList(ctx context.Context, freeList *freelist.FreeList, basePath 
 		return 0, fmt.Errorf("cannot get freelist gc file: %w", err)
 	}
 
-	flFile, err := os.OpenFile(flPath, os.O_RDONLY, 0644)
-	if err != nil {
-		return 0, fmt.Errorf("error opening freelist gc file: %w", err)
-	}
-	defer flFile.Close()
-
-	fi, err := flFile.Stat()
+	fi, err := os.Stat(flPath)
 	if err != nil {
 		return 0, fmt.Errorf("cannot stat freelist gc file: %w", err)
 	}
 
-	var count int
 	// If the freelist size is non-zero, then process its records.
+	var count int
 	if fi.Size() != 0 {
+		log.Infof("Applying freelist to primary storage")
+
+		flFile, err := os.OpenFile(flPath, os.O_RDONLY, 0644)
+		if err != nil {
+			return 0, fmt.Errorf("error opening freelist gc file: %w", err)
+		}
+		defer flFile.Close()
+
+		total := int(fi.Size() / (types.OffBytesLen + types.SizeBytesLen))
+		startTime := time.Now()
 		flIter := freelist.NewIter(bufio.NewReader(flFile))
 		for {
 			free, err := flIter.Next()
@@ -418,19 +422,22 @@ func processFreeList(ctx context.Context, freeList *freelist.FreeList, basePath 
 			// Mark dead location with tombstone by zeroing the record's data.
 			err = zeroRecord(free.Offset, free.Size, basePath, maxFileSize)
 			if err != nil {
-				log.Errorw("GC cannot zero primary record", "err", err)
+				log.Errorw("Cannot zero primary record", "err", err)
 				continue
 			}
 			count++
+
+			// Log every 5 minutes, do time check every 2^20 records.
+			if count&1024*1024-1 == 0 && time.Since(startTime) >= 5*time.Minute {
+				log.Infof("Processed %d of %d freelist records: %d%% done", count, total, 100*count/total)
+				startTime = time.Now()
+			}
 		}
-	}
-	if count > 0 {
-		log.Infow("GC marked primary records from freelist as deleted", "count", count)
+		log.Infow("Marked primary records from freelist as deleted", "count", count)
+		flFile.Close()
 	}
 
-	flFile.Close()
-	err = os.Remove(flPath)
-	if err != nil {
+	if err = os.Remove(flPath); err != nil {
 		return 0, fmt.Errorf("error removing freelist: %w", err)
 	}
 
