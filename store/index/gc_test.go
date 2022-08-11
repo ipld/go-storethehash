@@ -48,14 +48,10 @@ func TestGC(t *testing.T) {
 	require.NoError(t, err)
 	defer idx.Close()
 
-	require.False(t, idx.gcCheckpoint)
-
 	// GC should now remove the first 2 files only.
 	count, err = idx.gc(context.Background())
 	require.NoError(t, err)
 	require.Equal(t, count, 2)
-
-	require.True(t, idx.gcCheckpoint)
 
 	// Another GC should not remove files.
 	count, err = idx.gc(context.Background())

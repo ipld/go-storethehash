@@ -79,6 +79,8 @@ const (
 
 	// bucketPoolSize is the bucket cache size.
 	bucketPoolSize = 1024
+
+	deletedBit = uint32(1 << 31)
 )
 
 // stripBucketPrefix removes the prefix that is used for the bucket.
@@ -136,9 +138,6 @@ type Index struct {
 	updateSig         chan struct{}
 
 	gcDone chan struct{}
-	// Checkpoint is the last bucket index still in use by first file.
-	gcCheckpoint  bool
-	gcBucketIndex BucketIndex
 }
 
 type bucketPool map[BucketIndex][]byte
@@ -304,21 +303,29 @@ func scanIndexFile(ctx context.Context, basePath string, fileNum uint32, buckets
 	}
 	defer file.Close()
 
-	buffered := bufio.NewReaderSize(file, indexBufferSize)
+	fi, err := file.Stat()
+	if err != nil {
+		return fmt.Errorf("cannot stat index file: %w", err)
+	}
+	if fi.Size() == 0 {
+		return nil
+	}
+
 	sizeBuffer := make([]byte, sizePrefixSize)
 	scratch := make([]byte, 256)
-	var iterPos, i int64
+	var pos int64
+	var i int
 	for {
-		_, err = io.ReadFull(buffered, sizeBuffer)
-		if err != nil {
+		if _, err = file.ReadAt(sizeBuffer, pos); err != nil {
 			if err == io.EOF {
+				// Finished reading entire index.
 				break
 			}
 			if err == io.ErrUnexpectedEOF {
 				log.Errorw("Unexpected EOF scanning index", "file", indexPath)
 				file.Close()
 				// Cut off incomplete data
-				e := os.Truncate(indexPath, iterPos)
+				e := os.Truncate(indexPath, pos)
 				if e != nil {
 					log.Errorw("Error truncating file", "err", e, "file", indexPath)
 				}
@@ -326,16 +333,20 @@ func scanIndexFile(ctx context.Context, basePath string, fileNum uint32, buckets
 			}
 			return err
 		}
-		size := binary.LittleEndian.Uint32(sizeBuffer)
+		pos += sizePrefixSize
 
-		pos := iterPos + sizePrefixSize
-		iterPos = pos + int64(size)
+		size := binary.LittleEndian.Uint32(sizeBuffer)
+		if size&deletedBit != 0 {
+			// Record is deleted, so skip.
+			pos += int64(size ^ deletedBit)
+			continue
+		}
+
 		if int(size) > len(scratch) {
 			scratch = make([]byte, size)
 		}
 		data := scratch[:size]
-		_, err = io.ReadFull(buffered, data)
-		if err != nil {
+		if _, err = file.ReadAt(data, pos); err != nil {
 			if err == io.ErrUnexpectedEOF || err == io.EOF {
 				// The file is corrupt since the expected data could not be
 				// read. Take the usable data and move on.
@@ -352,7 +363,7 @@ func scanIndexFile(ctx context.Context, basePath string, fileNum uint32, buckets
 		}
 
 		i++
-		if i%1024 == 0 && ctx.Err() != nil {
+		if i&1023 == 0 && ctx.Err() != nil {
 			return ctx.Err()
 		}
 
@@ -365,6 +376,8 @@ func scanIndexFile(ctx context.Context, basePath string, fileNum uint32, buckets
 		if err != nil {
 			return err
 		}
+
+		pos += int64(size)
 	}
 	log.Infof("Scanned %s", indexPath)
 	return nil
