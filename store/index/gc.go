@@ -199,7 +199,7 @@ func (index *Index) gcIndexFile(ctx context.Context, fileNum uint32, indexPath s
 		return false, fmt.Errorf("cannot stat index file: %w", err)
 	}
 	if fi.Size() == 0 {
-		// File is empty, so OK to delete.
+		// File is empty, so OK to delete if it is first file.
 		return true, nil
 	}
 
@@ -209,6 +209,7 @@ func (index *Index) gcIndexFile(ctx context.Context, fileNum uint32, indexPath s
 	}
 	defer file.Close()
 
+	var freedCount int
 	var freeAtSize uint32
 	var busyAt, freeAt int64
 	freeAt = -1
@@ -231,7 +232,7 @@ func (index *Index) gcIndexFile(ctx context.Context, fileNum uint32, indexPath s
 
 		size := binary.LittleEndian.Uint32(sizeBuf)
 		if size&deletedBit != 0 {
-			// Record is deleted.
+			// Record is already deleted.
 			size ^= deletedBit
 			if freeAt > busyAt {
 				// Previous record free, so merge this record into the last.
@@ -242,7 +243,7 @@ func (index *Index) gcIndexFile(ctx context.Context, fileNum uint32, indexPath s
 					return false, fmt.Errorf("cannot write to index file %s: %w", file.Name(), err)
 				}
 			} else {
-				// Previous recorc was not free, so mark new free position.
+				// Previous record was not free, so mark new free position.
 				freeAt = pos
 				freeAtSize = size
 			}
@@ -293,9 +294,12 @@ func (index *Index) gcIndexFile(ctx context.Context, fileNum uint32, indexPath s
 				freeAt = pos
 				freeAtSize = size
 			}
+			freedCount++
 		}
 		pos += sizePrefixSize + int64(size)
 	}
+
+	log.Infof("Marked %d index records as free", freedCount)
 
 	// If there is a span of free records at end of file, truncate file.
 	if freeAt > busyAt {
