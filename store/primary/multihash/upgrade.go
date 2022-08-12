@@ -13,6 +13,53 @@ import (
 	"github.com/ipld/go-storethehash/store/types"
 )
 
+type IndexRemapper struct {
+	firstFile   uint32
+	maxFileSize uint32
+	sizes       []int64
+}
+
+func (cp *MultihashPrimary) NewIndexRemapper() (*IndexRemapper, error) {
+	header, err := readHeader(cp.headerPath)
+	if err != nil {
+		return nil, err
+	}
+
+	var sizes []int64
+	for fileNum := header.FirstFile; fileNum <= cp.fileNum; fileNum++ {
+		fi, err := os.Stat(primaryFileName(cp.basePath, fileNum))
+		if err != nil {
+			if os.IsNotExist(err) {
+				break
+			}
+			return nil, err
+		}
+		sizes = append(sizes, fi.Size())
+	}
+
+	return &IndexRemapper{
+		firstFile:   header.FirstFile,
+		maxFileSize: cp.maxFileSize,
+		sizes:       sizes,
+	}, nil
+}
+
+func (ir *IndexRemapper) RemapOffset(pos types.Position) (types.Position, error) {
+	fileNum := ir.firstFile
+	for _, size := range ir.sizes {
+		if pos < types.Position(size) {
+			break
+		}
+		pos -= types.Position(size)
+		fileNum++
+	}
+	if pos >= types.Position(ir.maxFileSize) {
+		return 0, fmt.Errorf("cannot convert out-of-range primary position: %d", pos)
+	}
+
+	return absolutePrimaryPos(pos, fileNum, ir.maxFileSize), nil
+}
+
 func upgradePrimary(ctx context.Context, filePath, headerPath string, maxFileSize uint32, freeList *freelist.FreeList) (bool, error) {
 	if ctx.Err() != nil {
 		return false, ctx.Err()
@@ -163,20 +210,4 @@ func chunkOldPrimary(ctx context.Context, file *os.File, name string, fileSizeLi
 
 func createFileAppend(name string) (*os.File, error) {
 	return os.OpenFile(name, os.O_WRONLY|os.O_APPEND|os.O_CREATE|os.O_TRUNC, 0644)
-}
-
-func RemapOffset(pos types.Position, firstFile, maxFileSize uint32, sizes []int64) (types.Position, error) {
-	fileNum := firstFile
-	for _, size := range sizes {
-		if pos < types.Position(size) {
-			break
-		}
-		pos -= types.Position(size)
-		fileNum++
-	}
-	if pos >= types.Position(maxFileSize) {
-		return 0, fmt.Errorf("cannot convert out-of-range primary position: %d", pos)
-	}
-
-	return absolutePrimaryPos(pos, fileNum, maxFileSize), nil
 }

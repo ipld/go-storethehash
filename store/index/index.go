@@ -252,9 +252,9 @@ func Open(ctx context.Context, path string, primary primary.PrimaryStorage, inde
 
 func (idx *Index) remapIndex(mp *mhprimary.MultihashPrimary) error {
 	log.Infow("Remapping primary offsets in index")
-	firstPrimaryFile, maxPrimaryFileSize, primarySizes, err := mp.GetFileInfo()
+	remapper, err := mp.NewIndexRemapper()
 	if err != nil {
-		return fmt.Errorf("cannot get info for primary files: %w", err)
+		return err
 	}
 
 	var count int
@@ -289,7 +289,7 @@ func (idx *Index) remapIndex(mp *mhprimary.MultihashPrimary) error {
 		recIter := records.Iter()
 		for !recIter.Done() {
 			record := recIter.Next()
-			offset, err := mhprimary.RemapOffset(record.Block.Offset, firstPrimaryFile, maxPrimaryFileSize, primarySizes)
+			offset, err := remapper.RemapOffset(record.Block.Offset)
 			if err != nil {
 				return err
 			}

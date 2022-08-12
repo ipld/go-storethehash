@@ -5,7 +5,6 @@ import (
 	"bytes"
 	"context"
 	"encoding/binary"
-	"encoding/json"
 	"fmt"
 	"io"
 	"os"
@@ -23,8 +22,9 @@ const (
 	// primary data.
 	PrimaryVersion = 1
 
-	// maxFileSizeLimit is largest the max file size is allowed to be.
-	maxFileSizeLimit = 1024 * 1024 * 1024
+	// defaultMaxFileSize is the default max file size and the largest the max
+	// file size is allowed to be.
+	defaultMaxFileSize = 1024 * 1024 * 1024
 
 	// blockBufferSize is the size of primary I/O buffers. If has the same size
 	// as the linux pipe size.
@@ -39,25 +39,6 @@ const (
 
 	deletedBit = uint32(1 << 31)
 )
-
-// Header contains information about the primary. This is actually stored in a
-// separate ".info" file, but is the first file read when the index is opened.
-type Header struct {
-	// A version number in case we change the header
-	Version int
-	// MaxFileSize is the size limit of each index file. This cannot be greater
-	// than 4GiB.
-	MaxFileSize uint32
-	// First index file number
-	FirstFile uint32
-}
-
-func newHeader(maxFileSize uint32) Header {
-	return Header{
-		Version:     PrimaryVersion,
-		MaxFileSize: maxFileSize,
-	}
-}
 
 // A primary storage that is multihash aware.
 type MultihashPrimary struct {
@@ -89,8 +70,6 @@ type blockPool struct {
 	blocks []blockRecord
 }
 
-var _ primary.PrimaryStorage = &MultihashPrimary{}
-
 func newBlockPool() blockPool {
 	return blockPool{
 		refs:   make(map[types.Block]int, blockPoolSize),
@@ -107,10 +86,9 @@ func Open(path string, maxFileSize uint32, freeList *freelist.FreeList) (*Multih
 	headerPath := filepath.Clean(path) + ".info"
 
 	if maxFileSize == 0 {
-		// Use the maximum size limit as the default.
-		maxFileSize = maxFileSizeLimit
-	} else if maxFileSize > maxFileSizeLimit {
-		return nil, fmt.Errorf("maximum file size cannot exceed %d", maxFileSizeLimit)
+		maxFileSize = defaultMaxFileSize
+	} else if maxFileSize > defaultMaxFileSize {
+		return nil, fmt.Errorf("maximum file size cannot exceed %d", defaultMaxFileSize)
 	}
 
 	_, err := upgradePrimary(context.Background(), path, headerPath, maxFileSize, freeList)
@@ -516,30 +494,6 @@ func readSizePrefix(reader io.Reader) (uint32, error) {
 	return binary.LittleEndian.Uint32(sizeBuffer), nil
 }
 
-func readHeader(filePath string) (Header, error) {
-	data, err := os.ReadFile(filePath)
-	if err != nil {
-		return Header{}, err
-	}
-
-	var header Header
-	err = json.Unmarshal(data, &header)
-	if err != nil {
-		return Header{}, err
-	}
-
-	return header, nil
-}
-
-func writeHeader(headerPath string, header Header) error {
-	data, err := json.Marshal(&header)
-	if err != nil {
-		return err
-	}
-
-	return os.WriteFile(headerPath, data, 0o666)
-}
-
 func primaryFileName(basePath string, fileNum uint32) string {
 	return fmt.Sprintf("%s.%d", basePath, fileNum)
 }
@@ -612,3 +566,5 @@ func (cp *MultihashPrimary) getFileSizes(fileNum uint32) ([]int64, error) {
 	}
 	return sizes, nil
 }
+
+var _ primary.PrimaryStorage = &MultihashPrimary{}
