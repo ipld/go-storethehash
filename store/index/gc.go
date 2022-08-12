@@ -310,7 +310,7 @@ func (index *Index) gcIndexFile(ctx context.Context, fileNum uint32, indexPath s
 		if err = file.Truncate(freeAt); err != nil {
 			return false, fmt.Errorf("failed to truncate index file: %w", err)
 		}
-		log.Infow("Truncated index file", "file", file.Name())
+		log.Infow("Truncated index file", "file", file.Name(), "at", freeAt, "removed", freeAtSize)
 		if freeAt == 0 {
 			return true, nil
 		}
