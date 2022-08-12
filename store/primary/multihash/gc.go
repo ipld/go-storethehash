@@ -227,51 +227,44 @@ func (gc *primaryGC) reapRecords(ctx context.Context, fileNum uint32) (bool, err
 	var freeCount, busyCount int
 	var busyAt, freeAt, prevBusyAt int64
 	var busySize, prevBusySize int64
+	var freeAtSize uint32
 	freeAt = -1
 	busyAt = -1
 	prevBusyAt = -1
 
 	// See if any entries can be truncated
-	inBuf := bufio.NewReader(file)
-	sizeBuffer := make([]byte, sizePrefixSize)
-	scratch := make([]byte, 256)
+	sizeBuf := make([]byte, sizePrefixSize)
 	var pos int64
 	for {
 		if ctx.Err() != nil {
 			return false, ctx.Err()
 		}
-		if _, err = io.ReadFull(inBuf, sizeBuffer); err != nil {
+		if _, err = file.ReadAt(sizeBuf, pos); err != nil {
 			if err == io.EOF {
 				// Finished reading entire primary.
 				break
 			}
 			return false, err
 		}
-		size := binary.LittleEndian.Uint32(sizeBuffer)
-		if int(size) > len(scratch) {
-			scratch = make([]byte, size)
-		}
-		data := scratch[:size]
-		if _, err = io.ReadFull(inBuf, data); err != nil {
-			if err == io.EOF {
-				// The data has not been written yet, or the file is corrupt.
-				// Take the data we are able to use and move on.
-				break
-			}
-			return false, fmt.Errorf("error reading data from primary: %w", err)
-		}
+		size := binary.LittleEndian.Uint32(sizeBuf)
 
-		if allZeros(data) {
-			// Record is deleted.
-			freeCount++
-			// Only update freeAt if there is a busy record after it.
-			if busyAt >= freeAt {
-				freeAt = pos
-				if busyAt == freeAt {
-					busyAt = prevBusyAt
-					busySize = prevBusySize
+		if size&deletedBit != 0 {
+			size ^= deletedBit
+			// If previous record is free.
+			if freeAt > busyAt {
+				// Merge this free record into the last
+				freeAtSize += sizePrefixSize + size
+				binary.LittleEndian.PutUint32(sizeBuf, freeAtSize|deletedBit)
+				_, err = file.WriteAt(sizeBuf, freeAt)
+				if err != nil {
+					return false, fmt.Errorf("cannot write to index file %s: %w", file.Name(), err)
 				}
+			} else {
+				// Previous record was not free, so mark new free position.
+				freeAt = pos
+				freeAtSize = size
 			}
+			freeCount++
 		} else {
 			// Record is in use.
 			busyCount++
@@ -284,6 +277,7 @@ func (gc *primaryGC) reapRecords(ctx context.Context, fileNum uint32) (bool, err
 		pos += sizePrefixSize + int64(size)
 	}
 
+	// If there is a span of free records at end of file, truncate file.
 	if freeAt > busyAt {
 		sizeBefore := fi.Size()
 		// End of primary is free.
@@ -298,12 +292,6 @@ func (gc *primaryGC) reapRecords(ctx context.Context, fileNum uint32) (bool, err
 			// Entire primary is free.
 			return true, nil
 		}
-		if busyAt != -1 {
-			_, err = file.Seek(busyAt, io.SeekStart)
-			if err != nil {
-				return false, fmt.Errorf("cannot seek primary: %w", err)
-			}
-		}
 	}
 
 	// If only known busy location was freed, but file is not empty, then start
@@ -312,21 +300,26 @@ func (gc *primaryGC) reapRecords(ctx context.Context, fileNum uint32) (bool, err
 		return false, nil
 	}
 
-	// If more that 75% of the records in the file are free, rewrite the last 2
+	// If 75% or more of the records in the file are free, rewrite the last 2
 	// records. that are still in use, into a later primary. This will allow
 	// low-use primary files to evaporate over time.
 	log.Debugf("%s freecount=%d busycount=%d", fileName, freeCount, busyCount)
 	if 4*freeCount >= 3*(freeCount+busyCount) {
+		scratch := make([]byte, 1024)
+
 		for busyAt >= 0 {
 			if ctx.Err() != nil {
 				return false, ctx.Err()
 			}
 
 			// Read the record data.
-			if _, err = file.ReadAt(sizeBuffer, busyAt); err != nil {
+			if _, err = file.ReadAt(sizeBuf, busyAt); err != nil {
 				return false, fmt.Errorf("cannot read record size: %w", err)
 			}
-			size := binary.LittleEndian.Uint32(sizeBuffer)
+			size := binary.LittleEndian.Uint32(sizeBuf)
+			if int(size) > len(scratch) {
+				scratch = make([]byte, size)
+			}
 			data := scratch[:size]
 			if _, err = file.ReadAt(data, busyAt+sizePrefixSize); err != nil {
 				return false, fmt.Errorf("cannot read record data: %w", err)
@@ -374,17 +367,8 @@ func (gc *primaryGC) reapRecords(ctx context.Context, fileNum uint32) (bool, err
 	return false, nil
 }
 
-func allZeros(data []byte) bool {
-	for i := range data {
-		if data[i] != 0 {
-			return false
-		}
-	}
-	return true
-}
-
-// processFreeList reads the freelist and marks the locations in primary
-// files as dead by zeroing the data of the dead record.
+// processFreeList reads the freelist and marks the locations in primary files
+// as dead by setting the deleted bit in the record size field.
 func processFreeList(ctx context.Context, freeList *freelist.FreeList, basePath string, maxFileSize uint32) (int, error) {
 	flPath, err := freeList.ToGC()
 	if err != nil {
@@ -419,10 +403,10 @@ func processFreeList(ctx context.Context, freeList *freelist.FreeList, basePath 
 				return 0, fmt.Errorf("error reading freelist: %w", err)
 			}
 
-			// Mark dead location with tombstone by zeroing the record's data.
-			err = zeroRecord(free.Offset, free.Size, basePath, maxFileSize)
+			// Mark dead location with tombstone bit in the record's size data.
+			err = deleteRecord(free.Offset, free.Size, basePath, maxFileSize)
 			if err != nil {
-				log.Errorw("Cannot zero primary record", "err", err)
+				log.Errorw("Cannot mark primary record deleted", "err", err)
 				continue
 			}
 			count++
@@ -444,7 +428,7 @@ func processFreeList(ctx context.Context, freeList *freelist.FreeList, basePath 
 	return count, nil
 }
 
-func zeroRecord(pos types.Position, size types.Size, basePath string, maxFileSize uint32) error {
+func deleteRecord(pos types.Position, size types.Size, basePath string, maxFileSize uint32) error {
 	var localPos types.Position
 	var fileName string
 	if maxFileSize == 0 {
@@ -471,21 +455,28 @@ func zeroRecord(pos types.Position, size types.Size, basePath string, maxFileSiz
 		return fmt.Errorf("freelist record has out-of-range primary offset, offset=%d, fileSize=%d", localPos, fi.Size())
 	}
 
-	sizeBuffer := make([]byte, sizePrefixSize)
-	if _, err = file.ReadAt(sizeBuffer, int64(localPos)); err != nil {
+	sizeBuf := make([]byte, sizePrefixSize)
+	if _, err = file.ReadAt(sizeBuf, int64(localPos)); err != nil {
 		return err
 	}
-	recSize := binary.LittleEndian.Uint32(sizeBuffer)
+	recSize := binary.LittleEndian.Uint32(sizeBuf)
+	if recSize&deletedBit != 0 {
+		// Already deleted
+		return nil
+	}
+
 	if types.Size(recSize) != size {
 		return fmt.Errorf("record size (%d) in primary %s does not match size in freelist (%d), pos=%d", recSize, fileName, size, localPos)
 	}
 
-	zeros := make([]byte, size)
-	_, err = file.WriteAt(zeros, int64(localPos+sizePrefixSize))
+	// Mark the record as deleted by setting the highest bit in the size. That
+	// bit is otherwise unused since the maximum filesize is 2^30.
+	binary.LittleEndian.PutUint32(sizeBuf, recSize|deletedBit)
+	_, err = file.WriteAt(sizeBuf, int64(localPos))
 	if err != nil {
 		return fmt.Errorf("cannot write to primary file %s: %w", fileName, err)
 	}
 
-	log.Debugw("Zeroed record", "file", fileName, "pos", localPos, "size", size)
+	log.Debugw("Marked record deleted", "file", fileName, "pos", localPos, "size", size)
 	return nil
 }

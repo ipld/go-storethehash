@@ -23,8 +23,8 @@ const (
 	// primary data.
 	PrimaryVersion = 1
 
-	// defaultMaxFileSize is the default size at which to start a new file.
-	defaultMaxFileSize = 1024 * 1024 * 1024
+	// maxFileSizeLimit is largest the max file size is allowed to be.
+	maxFileSizeLimit = 1024 * 1024 * 1024
 
 	// blockBufferSize is the size of primary I/O buffers. If has the same size
 	// as the linux pipe size.
@@ -36,6 +36,8 @@ const (
 	// record list.
 	sizePrefixSize = 4
 	SizePrefix     = 4
+
+	deletedBit = uint32(1 << 31)
 )
 
 // Header contains information about the primary. This is actually stored in a
@@ -105,7 +107,10 @@ func Open(path string, maxFileSize uint32, freeList *freelist.FreeList) (*Multih
 	headerPath := filepath.Clean(path) + ".info"
 
 	if maxFileSize == 0 {
-		maxFileSize = defaultMaxFileSize
+		// Use the maximum size limit as the default.
+		maxFileSize = maxFileSizeLimit
+	} else if maxFileSize > maxFileSizeLimit {
+		return nil, fmt.Errorf("maximum file size cannot exceed %d", maxFileSizeLimit)
 	}
 
 	_, err := upgradePrimary(context.Background(), path, headerPath, maxFileSize, freeList)

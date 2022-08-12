@@ -101,7 +101,7 @@ func TestUpgradePrimary(t *testing.T) {
 	require.Equal(t, header.FirstFile, uint32(0))
 
 	_, err = Open(newPrimaryPath, 0, nil)
-	require.Equal(t, err, types.ErrPrimaryWrongFileSize{testFileSizeLimit, defaultMaxFileSize})
+	require.Equal(t, err, types.ErrPrimaryWrongFileSize{testFileSizeLimit, maxFileSizeLimit})
 
 	mp, err := Open(newPrimaryPath, testFileSizeLimit, nil)
 	require.NoError(t, err)

@@ -258,6 +258,8 @@ func (idx *Index) remapIndex(mp *mhprimary.MultihashPrimary) error {
 	}
 
 	var count int
+	var scratch []byte
+
 	for i, bucketPos := range idx.buckets {
 		// Log progress.
 		if bucketPos == 0 {
@@ -272,11 +274,14 @@ func (idx *Index) remapIndex(mp *mhprimary.MultihashPrimary) error {
 		if err != nil {
 			return fmt.Errorf("remap cannot open index file %s: %w", fileName, err)
 		}
-		defer file.Close()
 
 		// Read the record list from disk and get the file offset of that key in
 		// the primary storage.
-		data := make([]byte, idx.sizeBuckets[i])
+		recListSize := int(idx.sizeBuckets[i])
+		if len(scratch) < recListSize {
+			scratch = make([]byte, recListSize)
+		}
+		data := scratch[:recListSize]
 		if _, err = file.ReadAt(data, int64(localPos)); err != nil {
 			return fmt.Errorf("cannot read record list from index file %s: %w", fileName, err)
 		}

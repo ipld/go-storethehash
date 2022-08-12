@@ -81,34 +81,51 @@ func chunkOldPrimary(ctx context.Context, file *os.File, name string, fileSizeLi
 		return 0, err
 	}
 	writer := bufio.NewWriter(outFile)
-	reader := bufio.NewReader(file)
 
-	sizeBuffer := make([]byte, sizePrefixSize)
+	sizeBuf := make([]byte, sizePrefixSize)
 	var written int64
 	var count int
+	var pos int64
+	scratch := make([]byte, 1024)
+
 	for {
-		_, err = io.ReadFull(reader, sizeBuffer)
+		_, err = file.ReadAt(sizeBuf, pos)
 		if err != nil {
 			if err == io.EOF {
 				break
 			}
 			return 0, err
 		}
-		size := binary.LittleEndian.Uint32(sizeBuffer)
-		if _, err = writer.Write(sizeBuffer); err != nil {
+		size := binary.LittleEndian.Uint32(sizeBuf)
+		if _, err = writer.Write(sizeBuf); err != nil {
 			outFile.Close()
 			return 0, err
 		}
-		n, err := io.CopyN(writer, reader, int64(size))
+		pos += sizePrefixSize
+
+		del := false
+		if size&deletedBit != 0 {
+			size ^= deletedBit
+			del = true
+		}
+
+		if int(size) > len(scratch) {
+			scratch = make([]byte, size)
+		}
+		data := scratch[:size]
+
+		if !del {
+			if _, err = file.ReadAt(data, pos); err != nil {
+				return 0, fmt.Errorf("cannot read record data: %w", err)
+			}
+		}
+		_, err := writer.Write(data)
 		if err != nil {
 			outFile.Close()
 			return 0, err
 		}
-		if n != int64(size) {
-			writer.Flush()
-			outFile.Close()
-			return 0, fmt.Errorf("count not read complete entry from primary")
-		}
+		pos += int64(size)
+
 		written += sizePrefixSize + int64(size)
 		if written >= fileSizeLimit {
 			if err = writer.Flush(); err != nil {
