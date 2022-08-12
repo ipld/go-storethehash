@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"time"
 
 	logging "github.com/ipfs/go-log/v2"
@@ -209,7 +210,7 @@ func (index *Index) gcIndexFile(ctx context.Context, fileNum uint32, indexPath s
 	}
 	defer file.Close()
 
-	var freedCount int
+	var freedCount, mergedCount int
 	var freeAtSize uint32
 	var busyAt, freeAt int64
 	freeAt = -1
@@ -242,6 +243,7 @@ func (index *Index) gcIndexFile(ctx context.Context, fileNum uint32, indexPath s
 				if err != nil {
 					return false, fmt.Errorf("cannot write to index file %s: %w", file.Name(), err)
 				}
+				mergedCount++
 			} else {
 				// Previous record was not free, so mark new free position.
 				freeAt = pos
@@ -282,6 +284,7 @@ func (index *Index) gcIndexFile(ctx context.Context, fileNum uint32, indexPath s
 				if err != nil {
 					return false, fmt.Errorf("cannot write to index file %s: %w", file.Name(), err)
 				}
+				mergedCount++
 			} else {
 				// Mark the record as deleted by setting the highest bit in the size. That
 				// bit is otherwise unused since the maximum filesize is 2^30.
@@ -299,7 +302,7 @@ func (index *Index) gcIndexFile(ctx context.Context, fileNum uint32, indexPath s
 		pos += sizePrefixSize + int64(size)
 	}
 
-	log.Infof("Marked %d index records as free", freedCount)
+	log.Infow("Marked index records as free", "freed", freedCount, "merged", mergedCount, "file", filepath.Base(file.Name()))
 
 	// If there is a span of free records at end of file, truncate file.
 	if freeAt > busyAt {
