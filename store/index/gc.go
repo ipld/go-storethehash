@@ -87,7 +87,7 @@ func (index *Index) gc(ctx context.Context) (int, error) {
 	lastFileNum := index.fileNum
 	index.flushLock.Unlock()
 
-	for fileNum := header.FirstFile; fileNum != lastFileNum; fileNum++ {
+	for fileNum := header.FirstFile; fileNum < lastFileNum; fileNum++ {
 		indexPath := indexFileName(index.basePath, fileNum)
 
 		stale, err := index.gcIndexFile(ctx, fileNum, indexPath)

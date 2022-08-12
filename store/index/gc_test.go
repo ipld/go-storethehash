@@ -2,6 +2,7 @@ package index
 
 import (
 	"context"
+	"encoding/binary"
 	"fmt"
 	"io"
 	"os"
@@ -63,6 +64,92 @@ func TestGC(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, header.FirstFile, uint32(2))
 	require.Equal(t, idx.fileNum, uint32(24))
+
+	// --- Test truncation ---
+
+	// Remove buckets for last two records in 2nd to last index file.
+	bucketY := 7143210
+	bucketZ := 12228148
+	idx.buckets[bucketY] = 0
+	idx.sizeBuckets[bucketY] = 0
+	idx.buckets[bucketZ] = 0
+	idx.sizeBuckets[bucketZ] = 0
+
+	recordSize := int64(18 + sizePrefixSize)
+
+	fileName := indexFileName(idx.basePath, 23)
+	fi, err := os.Stat(fileName)
+	require.NoError(t, err)
+	sizeBefore := fi.Size()
+	t.Log("File size before truncation:", sizeBefore)
+
+	// Run GC and check that second to last file was truncated by two records.
+	count, err = idx.gc(context.Background())
+	require.NoError(t, err)
+	require.Equal(t, count, 0)
+
+	fi, err = os.Stat(fileName)
+	require.NoError(t, err)
+	sizeAfter := fi.Size()
+	t.Log("File size after trucation:", sizeAfter)
+	require.Equal(t, sizeAfter, sizeBefore-(2*recordSize))
+
+	// --- Test dead record merge ---
+
+	// Remove buckets for first two records in 2nd to last index file.
+	bucketY = 719032
+	bucketZ = 5851659
+	idx.buckets[bucketY] = 0
+	idx.sizeBuckets[bucketY] = 0
+	idx.buckets[bucketZ] = 0
+	idx.sizeBuckets[bucketZ] = 0
+
+	sizeBefore = fi.Size()
+
+	var deleted bool
+	sizeBuffer := make([]byte, sizePrefixSize)
+
+	// Read first record size and deleted bit before GC.
+	file, err := openFileForScan(fileName)
+	require.NoError(t, err)
+	_, err = file.ReadAt(sizeBuffer, 0)
+	require.NoError(t, err)
+	size := binary.LittleEndian.Uint32(sizeBuffer)
+	if size&deletedBit != 0 {
+		deleted = true
+		size ^= deletedBit
+	}
+	size1Before := size
+	require.False(t, deleted)
+	file.Close()
+	t.Log("Record size before:", size1Before)
+
+	// Run GC and check that first and second records were merged into one free record.
+	count, err = idx.gc(context.Background())
+	require.NoError(t, err)
+	require.Equal(t, count, 0)
+
+	fi, err = os.Stat(fileName)
+	require.NoError(t, err)
+	sizeAfter = fi.Size()
+
+	// File should not have changed size.
+	require.Equal(t, sizeAfter, sizeBefore)
+
+	// Read first record size and deleted bit before GC.
+	file, err = openFileForScan(fileName)
+	require.NoError(t, err)
+	_, err = file.ReadAt(sizeBuffer, 0)
+	require.NoError(t, err)
+	size = binary.LittleEndian.Uint32(sizeBuffer)
+	if size&deletedBit != 0 {
+		deleted = true
+		size ^= deletedBit
+	}
+	t.Log("Record size after:", size)
+	require.True(t, deleted)
+	require.Equal(t, size1Before+sizePrefixSize+size1Before, size)
+	file.Close()
 }
 
 func copyFile(src, dst string) error {
