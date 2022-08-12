@@ -265,4 +265,12 @@ func (cpi *MultihashPrimaryIter) Next() ([]byte, []byte, error) {
 	return h, value, err
 }
 
+func (cp *MultihashPrimary) StorageSize() (int64, error) {
+	fi, err := cp.file.Stat()
+	if err != nil {
+		return 0, err
+	}
+	return fi.Size(), nil
+}
+
 var _ primary.PrimaryStorage = &MultihashPrimary{}

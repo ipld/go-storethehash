@@ -156,3 +156,16 @@ func (cpi *FreeListIter) Next() (*types.Block, error) {
 	size := binary.LittleEndian.Uint32(sizeBuf)
 	return &types.Block{Size: types.Size(size), Offset: types.Position(offset)}, nil
 }
+
+// StorageSize returns bytes of storage used by the freelist.
+func (fl *FreeList) StorageSize() (int64, error) {
+	fi, err := fl.file.Stat()
+	if err != nil {
+		if os.IsNotExist(err) {
+			return 0, nil
+		}
+		return 0, err
+	}
+
+	return fi.Size(), nil
+}

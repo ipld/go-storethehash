@@ -79,4 +79,8 @@ func (imi *inMemoryIter) Next() ([]byte, []byte, error) {
 	return key, value, nil
 }
 
+func (im *InMemory) StorageSize() (int64, error) {
+	return 0, nil
+}
+
 var _ primary.PrimaryStorage = &InMemory{}
