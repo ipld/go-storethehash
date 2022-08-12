@@ -157,6 +157,8 @@ func OpenIndex(ctx context.Context, path string, primary primary.PrimaryStorage,
 	}
 	if maxFileSize == 0 {
 		maxFileSize = defaultMaxFileSize
+	} else if maxFileSize > defaultMaxFileSize {
+		return nil, fmt.Errorf("maximum file size cannot exceed %d", defaultMaxFileSize)
 	}
 
 	err := upgradeIndex(ctx, path, headerPath, maxFileSize)

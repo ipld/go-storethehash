@@ -273,7 +273,7 @@ func (index *Index) gcIndexFile(ctx context.Context, fileNum uint32, indexPath s
 			// Record is in use.
 			busyAt = pos
 		} else {
-			// Record is deleted.
+			// Record is free.
 			if freeAt > busyAt {
 				// Merge this free record into the last
 				freeAtSize += sizePrefixSize + size
