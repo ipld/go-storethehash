@@ -267,7 +267,7 @@ func (index *Index) gcIndexFile(ctx context.Context, fileNum uint32, indexPath s
 		}
 
 		bucketPrefix := BucketIndex(binary.LittleEndian.Uint32(data))
-		inUse, err := index.bucketInFile(bucketPrefix, fileNum)
+		inUse, err := index.busy(bucketPrefix, pos+sizePrefixSize, fileNum)
 		if err != nil {
 			return false, err
 		}
@@ -319,15 +319,15 @@ func (index *Index) gcIndexFile(ctx context.Context, fileNum uint32, indexPath s
 	return false, nil
 }
 
-func (index *Index) bucketInFile(bucketPrefix BucketIndex, fileNum uint32) (bool, error) {
+func (index *Index) busy(bucketPrefix BucketIndex, localPos int64, fileNum uint32) (bool, error) {
 	index.bucketLk.Lock()
 	bucketPos, err := index.buckets.Get(bucketPrefix)
 	index.bucketLk.Unlock()
 	if err != nil {
 		return false, err
 	}
-	ok, fnum := bucketPosToFileNum(bucketPos, index.maxFileSize)
-	if ok && fnum == fileNum {
+	localPosInBucket, fileNumInBucket := localizeBucketPos(bucketPos, index.maxFileSize)
+	if fileNum == fileNumInBucket && localPos == int64(localPosInBucket) {
 		return true, nil
 	}
 	return false, nil
