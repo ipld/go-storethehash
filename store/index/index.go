@@ -80,6 +80,10 @@ const (
 	// bucketPoolSize is the bucket cache size.
 	bucketPoolSize = 1024
 
+	// deletedBit is the highest order bit in the uint32 size part of an index
+	// file record, and when set, indicates that the index record is deleted.
+	// Since index files cannot exceed a size of 2^30, this bit is otherwise
+	// unused.
 	deletedBit = uint32(1 << 31)
 )
 
