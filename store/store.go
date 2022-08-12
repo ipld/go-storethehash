@@ -489,8 +489,34 @@ func (s *Store) GetSize(key []byte) (types.Size, bool, error) {
 	return blk.Size - types.Size(len(key)), true, nil
 }
 
-// IndexStorageSize returns the storage used by the index files. This includes
-// the `.info` file and the `.free` file and does not include primary storage.
+// IndexStorageSize returns the storage used by the index files.
 func (s *Store) IndexStorageSize() (int64, error) {
 	return s.index.StorageSize()
+}
+
+// PrimaryStorageSize returns the storage used by the primary storage files.
+func (s *Store) PrimaryStorageSize() (int64, error) {
+	return s.index.Primary.StorageSize()
+}
+
+// FreelistStorageSize returns the storage used by the freelist files.
+func (s *Store) FreelistStorageSize() (int64, error) {
+	return s.freelist.StorageSize()
+}
+
+// StorageSize returns the storage used by the index, primary, and freelist files.
+func (s *Store) StorageSize() (int64, error) {
+	isize, err := s.index.StorageSize()
+	if err != nil {
+		return 0, err
+	}
+	psize, err := s.index.Primary.StorageSize()
+	if err != nil {
+		return 0, err
+	}
+	fsize, err := s.freelist.StorageSize()
+	if err != nil {
+		return 0, err
+	}
+	return isize + psize + fsize, nil
 }

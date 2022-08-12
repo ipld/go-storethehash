@@ -264,34 +264,24 @@ func scanIndex(ctx context.Context, basePath string, fileNum uint32, buckets Buc
 	return lastFileNum, nil
 }
 
-// StorageSize returns bytes of storage used by the index and freelist files.
-func (i *Index) StorageSize() (int64, error) {
-	header, err := readHeader(i.headerPath)
+// StorageSize returns bytes of storage used by the index files.
+func (index *Index) StorageSize() (int64, error) {
+	header, err := readHeader(index.headerPath)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return 0, nil
 		}
 		return 0, err
 	}
-	var size int64
-	fi, err := os.Stat(i.headerPath)
+	fi, err := os.Stat(index.headerPath)
 	if err != nil {
 		return 0, err
 	}
-	size += fi.Size()
-
-	fi, err = os.Stat(i.basePath + ".free")
-	if err != nil {
-		if !os.IsNotExist(err) {
-			return 0, err
-		}
-	} else {
-		size += fi.Size()
-	}
+	size := fi.Size()
 
 	fileNum := header.FirstFile
 	for {
-		fi, err = os.Stat(indexFileName(i.basePath, fileNum))
+		fi, err = os.Stat(indexFileName(index.basePath, fileNum))
 		if err != nil {
 			if os.IsNotExist(err) {
 				break
