@@ -209,7 +209,7 @@ func OpenIndex(ctx context.Context, path string, primary primary.PrimaryStorage,
 		} else {
 			lastIndexNum, err = findLastIndex(path, header.FirstFile)
 			if err != nil {
-				return nil, fmt.Errorf("Could not find most recent index file: %w", err)
+				return nil, fmt.Errorf("could not find most recent index file: %w", err)
 			}
 		}
 	}
