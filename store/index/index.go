@@ -199,9 +199,18 @@ func OpenIndex(ctx context.Context, path string, primary primary.PrimaryStorage,
 			return nil, types.ErrIndexWrongFileSize{header.MaxFileSize, maxFileSize}
 		}
 
-		lastIndexNum, err = scanIndex(ctx, path, header.FirstFile, buckets, sizeBuckets, maxFileSize)
+		err = loadBucketState(ctx, path, buckets, sizeBuckets, maxFileSize)
 		if err != nil {
-			return nil, err
+			log.Warn("Could not load bucket state, scanning index file", "err", err)
+			lastIndexNum, err = scanIndex(ctx, path, header.FirstFile, buckets, sizeBuckets, maxFileSize)
+			if err != nil {
+				return nil, err
+			}
+		} else {
+			lastIndexNum, err = findLastIndex(path, header.FirstFile)
+			if err != nil {
+				return nil, fmt.Errorf("Could not find most recent index file: %w", err)
+			}
 		}
 	}
 
@@ -248,6 +257,10 @@ func OpenIndex(ctx context.Context, path string, primary primary.PrimaryStorage,
 
 func indexFileName(basePath string, fileNum uint32) string {
 	return fmt.Sprintf("%s.%d", basePath, fileNum)
+}
+
+func savedBucketsName(basePath string) string {
+	return basePath + ".buckets"
 }
 
 func scanIndex(ctx context.Context, basePath string, fileNum uint32, buckets Buckets, sizeBuckets SizeBuckets, maxFileSize uint32) (uint32, error) {
@@ -879,7 +892,83 @@ func (i *Index) Close() error {
 		i.file.Close()
 		return err
 	}
-	return i.file.Close()
+	if err = i.file.Close(); err != nil {
+		return err
+	}
+	return i.saveBucketState()
+}
+func (index *Index) saveBucketState() error {
+	bucketsFileName := savedBucketsName(index.basePath)
+	bucketsFileNameTemp := bucketsFileName + ".tmp"
+
+	file, err := os.Create(bucketsFileNameTemp)
+	if err != nil {
+		return err
+	}
+	writer := bufio.NewWriterSize(file, indexBufferSize)
+	buf := make([]byte, types.OffBytesLen+types.SizeBytesLen)
+
+	for i, offset := range index.buckets {
+		binary.LittleEndian.PutUint64(buf, uint64(offset))
+		binary.LittleEndian.PutUint32(buf[types.OffBytesLen:], uint32(index.sizeBuckets[i]))
+
+		_, err = writer.Write(buf)
+		if err != nil {
+			return err
+		}
+	}
+	if err = writer.Flush(); err != nil {
+		return err
+	}
+	if err = file.Close(); err != nil {
+		return err
+	}
+
+	log.Debug("Saved bucket state")
+
+	// Only create the file after saving all buckets.
+	return os.Rename(bucketsFileNameTemp, bucketsFileName)
+}
+
+func loadBucketState(ctx context.Context, basePath string, buckets Buckets, sizeBuckets SizeBuckets, maxFileSize uint32) error {
+	bucketsFileName := savedBucketsName(basePath)
+	file, err := os.Open(bucketsFileName)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		e := file.Close()
+		if e != nil {
+			log.Error("Error closing saved buckets file", "err", err)
+		}
+		if e = os.Remove(bucketsFileName); e != nil {
+			log.Error("Error removing saved buckets file", "err", err)
+		}
+	}()
+
+	reader := bufio.NewReaderSize(file, indexBufferSize)
+	buf := make([]byte, types.OffBytesLen+types.SizeBytesLen)
+
+	for i := 0; i < len(buckets); i++ {
+		// Read offset from bucket state.
+		_, err = io.ReadFull(reader, buf)
+		if err != nil {
+			return err
+		}
+		buckets[i] = types.Position(binary.LittleEndian.Uint64(buf))
+		sizeBuckets[i] = types.Size(binary.LittleEndian.Uint32(buf[types.OffBytesLen:]))
+	}
+
+	log.Debug("Loaded saved bucket state")
+	return nil
+}
+
+func RemoveSavedBuckets(basePath string) error {
+	err := os.Remove(savedBucketsName(basePath))
+	if err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	return nil
 }
 
 func (i *Index) OutstandingWork() types.Work {
@@ -1057,4 +1146,20 @@ func localizeBucketPos(pos types.Position, maxFileSize uint32) (types.Position, 
 	// Subtract file offset to get pos within its local file.
 	localPos := pos - (types.Position(fileNum) * types.Position(maxFileSize))
 	return localPos, fileNum
+}
+
+func findLastIndex(basePath string, fileNum uint32) (uint32, error) {
+	var lastFound uint32
+	for {
+		_, err := os.Stat(indexFileName(basePath, fileNum))
+		if err != nil {
+			if os.IsNotExist(err) {
+				break
+			}
+			return 0, err
+		}
+		lastFound = fileNum
+		fileNum++
+	}
+	return lastFound, nil
 }

@@ -454,6 +454,21 @@ func TestIndexGet(t *testing.T) {
 
 	err = i.Close()
 	require.NoError(t, err)
+	bucketsFileName := indexPath + ".buckets"
+	require.FileExists(t, bucketsFileName)
+
+	// Open index reading bucket state.
+	i, err = OpenIndex(context.Background(), indexPath, primaryStorage, bucketBits, fileSize, 0)
+	require.NoError(t, err)
+	require.NoFileExists(t, bucketsFileName)
+
+	// Open index scanning index files.
+	i2, err := OpenIndex(context.Background(), indexPath, primaryStorage, bucketBits, fileSize, 0)
+	require.NoError(t, err)
+
+	// Check that both indexes have same buckets.
+	require.Equal(t, i.buckets, i2.buckets)
+	require.Equal(t, i.sizeBuckets, i2.sizeBuckets)
 }
 
 func TestIndexHeader(t *testing.T) {

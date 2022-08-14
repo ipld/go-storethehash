@@ -33,7 +33,7 @@ func TestGC(t *testing.T) {
 	// All index files in use, so gc should not remove any files.
 	count, err := idx.gc(context.Background())
 	require.NoError(t, err)
-	require.Equal(t, count, 0)
+	require.Equal(t, 0, count)
 
 	require.NoError(t, idx.Close())
 
@@ -44,6 +44,9 @@ func TestGC(t *testing.T) {
 	err = copyFile(indexPath+".1", fmt.Sprintf("%s.%d", indexPath, idx.fileNum+2))
 	require.NoError(t, err)
 
+	// Adding index files invalidates the saved bucket state.
+	require.NoError(t, RemoveSavedBuckets(indexPath))
+
 	// Open the index with the duplicated files.
 	idx, err = OpenIndex(context.Background(), indexPath, primary, 24, 1024, 0)
 	require.NoError(t, err)
@@ -52,12 +55,12 @@ func TestGC(t *testing.T) {
 	// GC should now remove the first 2 files only.
 	count, err = idx.gc(context.Background())
 	require.NoError(t, err)
-	require.Equal(t, count, 2)
+	require.Equal(t, 2, count)
 
 	// Another GC should not remove files.
 	count, err = idx.gc(context.Background())
 	require.NoError(t, err)
-	require.Equal(t, count, 0)
+	require.Equal(t, 0, count)
 
 	// Check that first file is .2 and last file is .24
 	header, err := readHeader(idx.headerPath)
