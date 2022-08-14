@@ -931,6 +931,9 @@ func (index *Index) saveBucketState() error {
 }
 
 func loadBucketState(ctx context.Context, basePath string, buckets Buckets, sizeBuckets SizeBuckets, maxFileSize uint32) error {
+	if ctx.Err() != nil {
+		return ctx.Err()
+	}
 	bucketsFileName := savedBucketsName(basePath)
 	file, err := os.Open(bucketsFileName)
 	if err != nil {
