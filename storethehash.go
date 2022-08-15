@@ -29,7 +29,7 @@ type HashedBlockstore struct {
 
 // OpenHashedBlockstore opens a HashedBlockstore with the default index size
 func OpenHashedBlockstore(ctx context.Context, indexPath string, dataPath string, options ...store.Option) (*HashedBlockstore, error) {
-	primary, err := mhprimary.OpenMultihashPrimary(dataPath)
+	primary, err := mhprimary.Open(dataPath)
 	if err != nil {
 		return nil, err
 	}

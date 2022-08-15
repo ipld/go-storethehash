@@ -21,7 +21,7 @@ import (
 func initStore(t *testing.T, dir string, immutable bool) (*store.Store, error) {
 	indexPath := filepath.Join(dir, "storethehash.index")
 	dataPath := filepath.Join(dir, "storethehash.data")
-	primary, err := cidprimary.OpenCIDPrimary(dataPath)
+	primary, err := cidprimary.Open(dataPath)
 	if err != nil {
 		return nil, err
 	}
@@ -230,7 +230,7 @@ func TestRecoverBadKey(t *testing.T) {
 	tmpDir := t.TempDir()
 	indexPath := filepath.Join(tmpDir, "storethehash.index")
 	dataPath := filepath.Join(tmpDir, "storethehash.data")
-	primary, err := cidprimary.OpenCIDPrimary(dataPath)
+	primary, err := cidprimary.Open(dataPath)
 	require.NoError(t, err)
 	s, err := store.OpenStore(context.Background(), indexPath, primary, false)
 	require.NoError(t, err)
@@ -246,7 +246,7 @@ func TestRecoverBadKey(t *testing.T) {
 	require.NoError(t, err)
 
 	// Open store again.
-	primary, err = cidprimary.OpenCIDPrimary(dataPath)
+	primary, err = cidprimary.Open(dataPath)
 	require.NoError(t, err)
 	s, err = store.OpenStore(context.Background(), indexPath, primary, false)
 	require.NoError(t, err)

@@ -54,7 +54,7 @@ func OpenStore(ctx context.Context, path string, primary primary.PrimaryStorage,
 	}
 	c.apply(options)
 
-	index, err := index.OpenIndex(ctx, path, primary, c.indexSizeBits, c.indexFileSize, c.gcInterval, c.gcTimeLimit)
+	index, err := index.Open(ctx, path, primary, c.indexSizeBits, c.indexFileSize, c.gcInterval, c.gcTimeLimit)
 	if err != nil {
 		return nil, err
 	}
