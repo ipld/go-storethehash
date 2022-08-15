@@ -2,7 +2,6 @@ package storethehash
 
 import (
 	"context"
-	"time"
 
 	blocks "github.com/ipfs/go-block-format"
 	"github.com/ipfs/go-cid"
@@ -28,69 +27,13 @@ type HashedBlockstore struct {
 	hashOnRead bool
 }
 
-const defaultIndexSizeBits = uint8(24)
-const defaultIndexFileSize = uint32(1024 * 1024 * 1024)
-const defaultBurstRate = 4 * 1024 * 1024
-const defaultSyncInterval = time.Second
-const defaultGCInterval = 30 * time.Minute
-
-type configOptions struct {
-	indexSizeBits uint8
-	indexFileSize uint32
-	syncInterval  time.Duration
-	burstRate     types.Work
-	gcInterval    time.Duration
-}
-
-type Option func(*configOptions)
-
-func IndexBitSize(indexBitSize uint8) Option {
-	return func(co *configOptions) {
-		co.indexSizeBits = indexBitSize
-	}
-}
-
-func IndexFileSize(indexFileSize uint32) Option {
-	return func(co *configOptions) {
-		co.indexFileSize = indexFileSize
-	}
-}
-
-func SyncInterval(syncInterval time.Duration) Option {
-	return func(co *configOptions) {
-		co.syncInterval = syncInterval
-	}
-}
-
-func BurstRate(burstRate uint64) Option {
-	return func(co *configOptions) {
-		co.burstRate = types.Work(burstRate)
-	}
-}
-
-func GCInterval(gcInterval time.Duration) Option {
-	return func(co *configOptions) {
-		co.gcInterval = gcInterval
-	}
-}
-
 // OpenHashedBlockstore opens a HashedBlockstore with the default index size
-func OpenHashedBlockstore(ctx context.Context, indexPath string, dataPath string, options ...Option) (*HashedBlockstore, error) {
-	co := configOptions{
-		indexSizeBits: defaultIndexSizeBits,
-		indexFileSize: defaultIndexFileSize,
-		syncInterval:  defaultSyncInterval,
-		burstRate:     defaultBurstRate,
-		gcInterval:    defaultGCInterval,
-	}
-	for _, option := range options {
-		option(&co)
-	}
+func OpenHashedBlockstore(ctx context.Context, indexPath string, dataPath string, options ...store.Option) (*HashedBlockstore, error) {
 	primary, err := mhprimary.OpenMultihashPrimary(dataPath)
 	if err != nil {
 		return nil, err
 	}
-	store, err := store.OpenStore(ctx, indexPath, primary, co.indexSizeBits, co.indexFileSize, co.syncInterval, co.burstRate, co.gcInterval, true)
+	store, err := store.OpenStore(ctx, indexPath, primary, true, options...)
 	if err != nil {
 		return nil, err
 	}

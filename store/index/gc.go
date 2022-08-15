@@ -17,7 +17,7 @@ var log = logging.Logger("storethehash/index")
 // garbageCollector is a goroutine that runs periodically to search for and
 // remove stale index files. It runs every gcInterval, if there have been any
 // index updates.
-func (index *Index) garbageCollector(gcInterval time.Duration) {
+func (index *Index) garbageCollector(gcInterval, gcTimeLimit time.Duration) {
 	defer close(index.gcDone)
 
 	var gcDone chan struct{}
@@ -51,8 +51,15 @@ func (index *Index) garbageCollector(gcInterval time.Duration) {
 			gcDone = make(chan struct{})
 			go func() {
 				defer close(gcDone)
+				gcCtx := ctx
+				if gcTimeLimit != 0 {
+					var cancel context.CancelFunc
+					gcCtx, cancel = context.WithTimeout(ctx, gcTimeLimit)
+					defer cancel()
+				}
+
 				log.Infow("GC started")
-				fileCount, err := index.gc(ctx)
+				fileCount, err := index.gc(gcCtx)
 				if err != nil {
 					log.Errorw("GC failed", "err", err)
 					return
@@ -302,7 +309,8 @@ func (index *Index) gcIndexFile(ctx context.Context, fileNum uint32, indexPath s
 		pos += sizePrefixSize + int64(size)
 	}
 
-	log.Infow("Marked index records as free", "freed", freedCount, "merged", mergedCount, "file", filepath.Base(file.Name()))
+	fileName := filepath.Base(file.Name())
+	log.Infow("Marked index records as free", "freed", freedCount, "merged", mergedCount, "file", fileName)
 
 	// If there is a span of free records at end of file, truncate file.
 	if freeAt > busyAt {
@@ -310,7 +318,7 @@ func (index *Index) gcIndexFile(ctx context.Context, fileNum uint32, indexPath s
 		if err = file.Truncate(freeAt); err != nil {
 			return false, fmt.Errorf("failed to truncate index file: %w", err)
 		}
-		log.Infow("Removed free records from end of index file", "file", file.Name(), "at", freeAt, "bytes", freeAtSize)
+		log.Infow("Removed free records from end of index file", "file", fileName, "at", freeAt, "bytes", freeAtSize)
 		if freeAt == 0 {
 			return true, nil
 		}
