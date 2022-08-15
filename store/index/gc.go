@@ -61,7 +61,14 @@ func (index *Index) garbageCollector(gcInterval, gcTimeLimit time.Duration) {
 				log.Infow("GC started")
 				fileCount, err := index.gc(gcCtx)
 				if err != nil {
-					log.Errorw("GC failed", "err", err)
+					switch err {
+					case context.DeadlineExceeded:
+						log.Infow("GC stopped at time limit", "limit", gcTimeLimit)
+					case context.Canceled:
+						log.Info("GC canceled")
+					default:
+						log.Errorw("GC failed", "err", err)
+					}
 					return
 				}
 				if fileCount == 0 {
