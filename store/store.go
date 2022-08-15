@@ -52,9 +52,7 @@ func OpenStore(ctx context.Context, path string, primary primary.PrimaryStorage,
 		gcInterval:    defaultGCInterval,
 		gcTimeLimit:   defaultGCTimeLimit,
 	}
-	for _, option := range options {
-		option(&c)
-	}
+	c.apply(options)
 
 	index, err := index.OpenIndex(ctx, path, primary, c.indexSizeBits, c.indexFileSize, c.gcInterval, c.gcTimeLimit)
 	if err != nil {
