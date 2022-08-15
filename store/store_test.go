@@ -7,7 +7,6 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
-	"time"
 
 	"github.com/ipfs/go-cid"
 	store "github.com/ipld/go-storethehash/store"
@@ -18,12 +17,6 @@ import (
 	"github.com/multiformats/go-multihash"
 	"github.com/stretchr/testify/require"
 )
-
-const defaultIndexSizeBits = uint8(24)
-const defaultIndexFileSize = uint32(1024 * 1024 * 1024)
-const defaultBurstRate = 4 * 1024 * 1024
-const defaultSyncInterval = time.Second
-const defaultGCInterval = 0 //30 * time.Minute
 
 func initStore(t *testing.T, dir string, immutable bool) (*store.Store, error) {
 	indexPath := filepath.Join(dir, "storethehash.index")
