@@ -13,7 +13,7 @@ import (
 
 type InMemory [][2][]byte
 
-func NewInmemory(data [][2][]byte) *InMemory {
+func New(data [][2][]byte) *InMemory {
 	value := InMemory(data)
 	return &value
 }

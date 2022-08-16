@@ -12,7 +12,7 @@ func TestGet(t *testing.T) {
 	aa := [2][]byte{[]byte("aa"), {0x10}}
 	yy := [2][]byte{[]byte("yy"), {0x11}}
 	efg := [2][]byte{[]byte("efg"), {0x12}}
-	storage := inmemory.NewInmemory([][2][]byte{aa, yy, efg})
+	storage := inmemory.New([][2][]byte{aa, yy, efg})
 
 	key, value, err := storage.Get(types.Block{Offset: 0})
 	require.NoError(t, err)
@@ -34,7 +34,7 @@ func TestPut(t *testing.T) {
 	aa := [2][]byte{[]byte("aa"), {0x10}}
 	yy := [2][]byte{[]byte("yy"), {0x11}}
 	efg := [2][]byte{[]byte("efg"), {0x12}}
-	storage := inmemory.NewInmemory([][2][]byte{})
+	storage := inmemory.New([][2][]byte{})
 
 	put_aa, err := storage.Put(aa[0], aa[1])
 	require.NoError(t, err)

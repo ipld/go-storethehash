@@ -79,6 +79,12 @@ const (
 
 	// bucketPoolSize is the bucket cache size.
 	bucketPoolSize = 1024
+
+	// deletedBit is the highest order bit in the uint32 size part of an index
+	// file record, and when set, indicates that the index record is deleted.
+	// Since index files cannot exceed a size of 2^30, this bit is otherwise
+	// unused.
+	deletedBit = uint32(1 << 31)
 )
 
 // stripBucketPrefix removes the prefix that is used for the bucket.
@@ -136,20 +142,17 @@ type Index struct {
 	updateSig         chan struct{}
 
 	gcDone chan struct{}
-	// Checkpoint is the last bucket index still in use by first file.
-	gcCheckpoint  bool
-	gcBucketIndex BucketIndex
 }
 
 type bucketPool map[BucketIndex][]byte
 
-// OpenIndex opens the index for the given primary. The index is created if
-// there is no existing index at the specified path. If there is an older
-// version index, then it is automatically upgraded.
+// Open opens the index for the given primary. The index is created if there is
+// no existing index at the specified path. If there is an older version index,
+// then it is automatically upgraded.
 //
 // Specifying 0 for indexSizeBits and maxFileSize results in using their
 // default values. A gcInterval of 0 disables garbage collection.
-func OpenIndex(ctx context.Context, path string, primary primary.PrimaryStorage, indexSizeBits uint8, maxFileSize uint32, gcInterval time.Duration) (*Index, error) {
+func Open(ctx context.Context, path string, primary primary.PrimaryStorage, indexSizeBits uint8, maxFileSize uint32, gcInterval, gcTimeLimit time.Duration) (*Index, error) {
 	var file *os.File
 	headerPath := filepath.Clean(path) + ".info"
 
@@ -158,6 +161,8 @@ func OpenIndex(ctx context.Context, path string, primary primary.PrimaryStorage,
 	}
 	if maxFileSize == 0 {
 		maxFileSize = defaultMaxFileSize
+	} else if maxFileSize > defaultMaxFileSize {
+		return nil, fmt.Errorf("maximum file size cannot exceed %d", defaultMaxFileSize)
 	}
 
 	err := upgradeIndex(ctx, path, headerPath, maxFileSize)
@@ -194,9 +199,18 @@ func OpenIndex(ctx context.Context, path string, primary primary.PrimaryStorage,
 			return nil, types.ErrIndexWrongFileSize{header.MaxFileSize, maxFileSize}
 		}
 
-		lastIndexNum, err = scanIndex(ctx, path, header.FirstFile, buckets, sizeBuckets, maxFileSize)
+		err = loadBucketState(ctx, path, buckets, sizeBuckets, maxFileSize)
 		if err != nil {
-			return nil, err
+			log.Warn("Could not load bucket state, scanning index file", "err", err)
+			lastIndexNum, err = scanIndex(ctx, path, header.FirstFile, buckets, sizeBuckets, maxFileSize)
+			if err != nil {
+				return nil, err
+			}
+		} else {
+			lastIndexNum, err = findLastIndex(path, header.FirstFile)
+			if err != nil {
+				return nil, fmt.Errorf("could not find most recent index file: %w", err)
+			}
 		}
 	}
 
@@ -235,7 +249,7 @@ func OpenIndex(ctx context.Context, path string, primary primary.PrimaryStorage,
 	} else {
 		idx.updateSig = make(chan struct{}, 1)
 		idx.gcDone = make(chan struct{})
-		go idx.garbageCollector(gcInterval)
+		go idx.garbageCollector(gcInterval, gcTimeLimit)
 	}
 
 	return idx, nil
@@ -243,6 +257,10 @@ func OpenIndex(ctx context.Context, path string, primary primary.PrimaryStorage,
 
 func indexFileName(basePath string, fileNum uint32) string {
 	return fmt.Sprintf("%s.%d", basePath, fileNum)
+}
+
+func savedBucketsName(basePath string) string {
+	return basePath + ".buckets"
 }
 
 func scanIndex(ctx context.Context, basePath string, fileNum uint32, buckets Buckets, sizeBuckets SizeBuckets, maxFileSize uint32) (uint32, error) {
@@ -265,15 +283,15 @@ func scanIndex(ctx context.Context, basePath string, fileNum uint32, buckets Buc
 }
 
 // StorageSize returns bytes of storage used by the index files.
-func (index *Index) StorageSize() (int64, error) {
-	header, err := readHeader(index.headerPath)
+func (idx *Index) StorageSize() (int64, error) {
+	header, err := readHeader(idx.headerPath)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return 0, nil
 		}
 		return 0, err
 	}
-	fi, err := os.Stat(index.headerPath)
+	fi, err := os.Stat(idx.headerPath)
 	if err != nil {
 		return 0, err
 	}
@@ -281,7 +299,7 @@ func (index *Index) StorageSize() (int64, error) {
 
 	fileNum := header.FirstFile
 	for {
-		fi, err = os.Stat(indexFileName(index.basePath, fileNum))
+		fi, err = os.Stat(indexFileName(idx.basePath, fileNum))
 		if err != nil {
 			if os.IsNotExist(err) {
 				break
@@ -304,21 +322,29 @@ func scanIndexFile(ctx context.Context, basePath string, fileNum uint32, buckets
 	}
 	defer file.Close()
 
-	buffered := bufio.NewReaderSize(file, indexBufferSize)
+	fi, err := file.Stat()
+	if err != nil {
+		return fmt.Errorf("cannot stat index file: %w", err)
+	}
+	if fi.Size() == 0 {
+		return nil
+	}
+
 	sizeBuffer := make([]byte, sizePrefixSize)
 	scratch := make([]byte, 256)
-	var iterPos, i int64
+	var pos int64
+	var i int
 	for {
-		_, err = io.ReadFull(buffered, sizeBuffer)
-		if err != nil {
+		if _, err = file.ReadAt(sizeBuffer, pos); err != nil {
 			if err == io.EOF {
+				// Finished reading entire index.
 				break
 			}
 			if err == io.ErrUnexpectedEOF {
 				log.Errorw("Unexpected EOF scanning index", "file", indexPath)
 				file.Close()
 				// Cut off incomplete data
-				e := os.Truncate(indexPath, iterPos)
+				e := os.Truncate(indexPath, pos)
 				if e != nil {
 					log.Errorw("Error truncating file", "err", e, "file", indexPath)
 				}
@@ -326,16 +352,20 @@ func scanIndexFile(ctx context.Context, basePath string, fileNum uint32, buckets
 			}
 			return err
 		}
-		size := binary.LittleEndian.Uint32(sizeBuffer)
+		pos += sizePrefixSize
 
-		pos := iterPos + sizePrefixSize
-		iterPos = pos + int64(size)
+		size := binary.LittleEndian.Uint32(sizeBuffer)
+		if size&deletedBit != 0 {
+			// Record is deleted, so skip.
+			pos += int64(size ^ deletedBit)
+			continue
+		}
+
 		if int(size) > len(scratch) {
 			scratch = make([]byte, size)
 		}
 		data := scratch[:size]
-		_, err = io.ReadFull(buffered, data)
-		if err != nil {
+		if _, err = file.ReadAt(data, pos); err != nil {
 			if err == io.ErrUnexpectedEOF || err == io.EOF {
 				// The file is corrupt since the expected data could not be
 				// read. Take the usable data and move on.
@@ -352,7 +382,7 @@ func scanIndexFile(ctx context.Context, basePath string, fileNum uint32, buckets
 		}
 
 		i++
-		if i%1024 == 0 && ctx.Err() != nil {
+		if i&1023 == 0 && ctx.Err() != nil {
 			return ctx.Err()
 		}
 
@@ -365,6 +395,8 @@ func scanIndexFile(ctx context.Context, basePath string, fileNum uint32, buckets
 		if err != nil {
 			return err
 		}
+
+		pos += int64(size)
 	}
 	log.Infof("Scanned %s", indexPath)
 	return nil
@@ -374,22 +406,22 @@ func scanIndexFile(ctx context.Context, basePath string, fileNum uint32, buckets
 //
 // The key needs to be a cryptographically secure hash that is at least 4 bytes
 // long.
-func (i *Index) Put(key []byte, location types.Block) error {
+func (idx *Index) Put(key []byte, location types.Block) error {
 	// Get record list and bucket index
-	bucket, err := i.getBucketIndex(key)
+	bucket, err := idx.getBucketIndex(key)
 	if err != nil {
 		return err
 	}
-	i.bucketLk.Lock()
-	defer i.bucketLk.Unlock()
-	records, err := i.getRecordsFromBucket(bucket)
+	idx.bucketLk.Lock()
+	defer idx.bucketLk.Unlock()
+	records, err := idx.getRecordsFromBucket(bucket)
 	if err != nil {
 		return err
 	}
 
 	// The key does not need the prefix that was used to find the right
 	// bucket. For simplicity only full bytes are trimmed off.
-	indexKey := stripBucketPrefix(key, i.sizeBits)
+	indexKey := stripBucketPrefix(key, idx.sizeBits)
 
 	// No records stored in that bucket yet
 	var newData []byte
@@ -406,26 +438,26 @@ func (i *Index) Put(key []byte, location types.Block) error {
 			// The previous key is fully contained in the current key. We need to read the full
 			// key from the main data file in order to retrieve a key that is distinguishable
 			// from the one that should get inserted.
-			fullPrevKey, err := i.Primary.GetIndexKey(prevRecord.Block)
+			fullPrevKey, err := idx.Primary.GetIndexKey(prevRecord.Block)
 			if err != nil {
 				return fmt.Errorf("error reading previous key from primary: %w", err)
 			}
 			// The index key has already removed the prefix that is used to determine the
 			// bucket. Do the same for the full previous key.
-			prevKey := stripBucketPrefix(fullPrevKey, i.sizeBits)
+			prevKey := stripBucketPrefix(fullPrevKey, idx.sizeBits)
 			if prevKey == nil {
 				// The previous key, read from the primary, was bad. This means
 				// that the data in the primary at prevRecord.Bucket is not
 				// good, or that data in the index is bad and prevRecord.Bucket
 				// has a wrong location in the primary.  Log the error with
 				// diagnostic information.
-				cached, indexOffset, _, fileNum, err := i.readBucketInfo(bucket)
+				cached, indexOffset, _, fileNum, err := idx.readBucketInfo(bucket)
 				if err != nil {
 					log.Errorw("Cannot read bucket", "err", err)
 				} else {
 					msg := "Read bad pevious key data, too short"
 					if cached == nil {
-						log.Errorw(msg, "offset", indexOffset, "size", indexFileName(i.basePath, fileNum))
+						log.Errorw(msg, "offset", indexOffset, "size", indexFileName(idx.basePath, fileNum))
 					} else {
 						log.Error(msg)
 					}
@@ -440,8 +472,8 @@ func (i *Index) Put(key []byte, location types.Block) error {
 				// but it may not have been present in the first place, in which
 				// case that was the cause of this problem.
 				newData = records.PutKeys([]KeyPositionPair{{prevRecord.Key, location}}, prevRecord.Pos, pos)
-				i.outstandingWork += types.Work(len(newData) + BucketPrefixSize + sizePrefixSize)
-				i.nextPool[bucket] = newData
+				idx.outstandingWork += types.Work(len(newData) + BucketPrefixSize + sizePrefixSize)
+				idx.nextPool[bucket] = newData
 				return nil
 			}
 
@@ -457,13 +489,13 @@ func (i *Index) Put(key []byte, location types.Block) error {
 			} else {
 				// trimmedPrevKey should always be a prefix. since it is not
 				// here, collect some diagnostic logs.
-				cached, indexOffset, _, fileNum, err := i.readBucketInfo(bucket)
+				cached, indexOffset, _, fileNum, err := idx.readBucketInfo(bucket)
 				if err != nil {
 					log.Errorw("Cannot read bucket", "err", err)
 				} else {
 					msg := "Read bad pevious key data"
 					if cached == nil {
-						log.Errorw(msg, "offset", indexOffset, "size", indexFileName(i.basePath, fileNum))
+						log.Errorw(msg, "offset", indexOffset, "size", indexFileName(idx.basePath, fileNum))
 					} else {
 						log.Error(msg)
 					}
@@ -521,28 +553,28 @@ func (i *Index) Put(key []byte, location types.Block) error {
 			newData = records.PutKeys([]KeyPositionPair{{trimmedIndexKey, location}}, pos, pos)
 		}
 	}
-	i.outstandingWork += types.Work(len(newData) + BucketPrefixSize + sizePrefixSize)
-	i.nextPool[bucket] = newData
+	idx.outstandingWork += types.Work(len(newData) + BucketPrefixSize + sizePrefixSize)
+	idx.nextPool[bucket] = newData
 	return nil
 }
 
 // Update updates a key together with a file offset into the index.
-func (i *Index) Update(key []byte, location types.Block) error {
+func (idx *Index) Update(key []byte, location types.Block) error {
 	// Get record list and bucket index
-	bucket, err := i.getBucketIndex(key)
+	bucket, err := idx.getBucketIndex(key)
 	if err != nil {
 		return err
 	}
-	i.bucketLk.Lock()
-	defer i.bucketLk.Unlock()
-	records, err := i.getRecordsFromBucket(bucket)
+	idx.bucketLk.Lock()
+	defer idx.bucketLk.Unlock()
+	records, err := idx.getRecordsFromBucket(bucket)
 	if err != nil {
 		return err
 	}
 
 	// The key does not need the prefix that was used to find its bucket. For
 	// simplicity only full bytes are trimmed off.
-	indexKey := stripBucketPrefix(key, i.sizeBits)
+	indexKey := stripBucketPrefix(key, idx.sizeBits)
 
 	var newData []byte
 	// If no records are stored in that bucket yet, it means there is no key to
@@ -560,28 +592,28 @@ func (i *Index) Update(key []byte, location types.Block) error {
 		newData = records.PutKeys([]KeyPositionPair{{r.Key, location}}, r.Pos, r.NextPos())
 	}
 
-	i.outstandingWork += types.Work(len(newData) + BucketPrefixSize + sizePrefixSize)
-	i.nextPool[bucket] = newData
+	idx.outstandingWork += types.Work(len(newData) + BucketPrefixSize + sizePrefixSize)
+	idx.nextPool[bucket] = newData
 	return nil
 }
 
 // Remove removes a key from the index.
-func (i *Index) Remove(key []byte) (bool, error) {
+func (idx *Index) Remove(key []byte) (bool, error) {
 	// Get record list and bucket index
-	bucket, err := i.getBucketIndex(key)
+	bucket, err := idx.getBucketIndex(key)
 	if err != nil {
 		return false, err
 	}
-	i.bucketLk.Lock()
-	defer i.bucketLk.Unlock()
-	records, err := i.getRecordsFromBucket(bucket)
+	idx.bucketLk.Lock()
+	defer idx.bucketLk.Unlock()
+	records, err := idx.getRecordsFromBucket(bucket)
 	if err != nil {
 		return false, err
 	}
 
 	// The key does not need the prefix that was used to find its bucket. For
 	// simplicity only full bytes are trimmed off.
-	indexKey := stripBucketPrefix(key, i.sizeBits)
+	indexKey := stripBucketPrefix(key, idx.sizeBits)
 
 	var newData []byte
 	// If no records are stored in that bucket yet, it means there is no key to
@@ -605,12 +637,12 @@ func (i *Index) Remove(key []byte) (bool, error) {
 	// and see if any of them can be shortened. This process will be similar
 	// to finding where to put a new key.
 
-	i.outstandingWork += types.Work(len(newData) + BucketPrefixSize + sizePrefixSize)
-	i.nextPool[bucket] = newData
+	idx.outstandingWork += types.Work(len(newData) + BucketPrefixSize + sizePrefixSize)
+	idx.nextPool[bucket] = newData
 	return true, nil
 }
 
-func (i *Index) getBucketIndex(key []byte) (BucketIndex, error) {
+func (idx *Index) getBucketIndex(key []byte) (BucketIndex, error) {
 	if len(key) < 4 {
 		return 0, types.ErrKeyTooShort
 	}
@@ -618,14 +650,14 @@ func (i *Index) getBucketIndex(key []byte) (BucketIndex, error) {
 	// Determine which bucket a key falls into. Use the first few bytes of they
 	// key for it and interpret them as a little-endian integer.
 	prefix := BucketIndex(binary.LittleEndian.Uint32(key))
-	var leadingBits BucketIndex = (1 << i.sizeBits) - 1
+	var leadingBits BucketIndex = (1 << idx.sizeBits) - 1
 	return prefix & leadingBits, nil
 }
 
 // getRecordsFromBucket returns the recordList and bucket the key belongs to.
-func (i *Index) getRecordsFromBucket(bucket BucketIndex) (RecordList, error) {
+func (idx *Index) getRecordsFromBucket(bucket BucketIndex) (RecordList, error) {
 	// Get the index file offset of the record list the key is in.
-	cached, indexOffset, recordListSize, fileNum, err := i.readBucketInfo(bucket)
+	cached, indexOffset, recordListSize, fileNum, err := idx.readBucketInfo(bucket)
 	if err != nil {
 		return nil, fmt.Errorf("error reading bucket info: %w", err)
 	}
@@ -633,7 +665,7 @@ func (i *Index) getRecordsFromBucket(bucket BucketIndex) (RecordList, error) {
 	if cached != nil {
 		records = NewRecordListRaw(cached)
 	} else {
-		records, err = i.readDiskBucket(indexOffset, recordListSize, fileNum)
+		records, err = idx.readDiskBucket(indexOffset, recordListSize, fileNum)
 		if err != nil {
 			return nil, fmt.Errorf("error reading index records from disk: %w", err)
 		}
@@ -641,29 +673,29 @@ func (i *Index) getRecordsFromBucket(bucket BucketIndex) (RecordList, error) {
 	return records, nil
 }
 
-func (i *Index) flushBucket(bucket BucketIndex, newData []byte) (types.Block, types.Work, error) {
-	if i.length >= types.Position(i.maxFileSize) {
-		fileNum := i.fileNum + 1
-		indexPath := indexFileName(i.basePath, fileNum)
+func (idx *Index) flushBucket(bucket BucketIndex, newData []byte) (types.Block, types.Work, error) {
+	if idx.length >= types.Position(idx.maxFileSize) {
+		fileNum := idx.fileNum + 1
+		indexPath := indexFileName(idx.basePath, fileNum)
 		// If the index file being opened already exists then fileNum has
 		// wrapped and there are max uint32 of index files. This means that
 		// maxFileSize is set far too small or GC is disabled.
 		if _, err := os.Stat(indexPath); !os.IsNotExist(err) {
 			log.Warnw("Creating index file overwrites existing. Check that file size limit is not too small resulting in too many files.",
-				"maxFileSize", i.maxFileSize, "indexPath", indexPath)
+				"maxFileSize", idx.maxFileSize, "indexPath", indexPath)
 		}
 		file, err := openFileAppend(indexPath)
 		if err != nil {
 			return types.Block{}, 0, fmt.Errorf("cannot open new index file %s: %w", indexPath, err)
 		}
-		if err = i.writer.Flush(); err != nil {
-			return types.Block{}, 0, fmt.Errorf("cannot write to index file %s: %w", i.file.Name(), err)
+		if err = idx.writer.Flush(); err != nil {
+			return types.Block{}, 0, fmt.Errorf("cannot write to index file %s: %w", idx.file.Name(), err)
 		}
-		i.file.Close()
-		i.writer.Reset(file)
-		i.file = file
-		i.fileNum = fileNum
-		i.length = 0
+		idx.file.Close()
+		idx.writer.Reset(file)
+		idx.file = file
+		idx.fileNum = fileNum
+		idx.length = 0
 	}
 
 	// Write new data to disk. The record list is prefixed with the bucket they
@@ -671,28 +703,28 @@ func (i *Index) flushBucket(bucket BucketIndex, newData []byte) (types.Block, ty
 	// from the index itself.
 	newDataSize := make([]byte, sizePrefixSize)
 	binary.LittleEndian.PutUint32(newDataSize, uint32(len(newData))+uint32(BucketPrefixSize))
-	_, err := i.writer.Write(newDataSize)
+	_, err := idx.writer.Write(newDataSize)
 	if err != nil {
 		return types.Block{}, 0, err
 	}
 
 	bucketPrefixBuffer := make([]byte, BucketPrefixSize)
 	binary.LittleEndian.PutUint32(bucketPrefixBuffer, uint32(bucket))
-	if _, err = i.writer.Write(bucketPrefixBuffer); err != nil {
+	if _, err = idx.writer.Write(bucketPrefixBuffer); err != nil {
 		return types.Block{}, 0, err
 	}
 
-	if _, err = i.writer.Write(newData); err != nil {
+	if _, err = idx.writer.Write(newData); err != nil {
 		return types.Block{}, 0, err
 	}
-	length := i.length
+	length := idx.length
 	toWrite := types.Position(len(newData) + BucketPrefixSize + sizePrefixSize)
-	i.length += toWrite
+	idx.length += toWrite
 	// Fsyncs are expensive, so do not do them here; do in explicit Sync().
 
 	// Keep the reference to the stored data in the bucket.
 	return types.Block{
-		Offset: localPosToBucketPos(int64(length+sizePrefixSize), i.fileNum, i.maxFileSize),
+		Offset: localPosToBucketPos(int64(length+sizePrefixSize), idx.fileNum, idx.maxFileSize),
 		Size:   types.Size(len(newData) + BucketPrefixSize),
 	}, types.Work(toWrite), nil
 }
@@ -702,35 +734,35 @@ type bucketBlock struct {
 	blk    types.Block
 }
 
-func (i *Index) readBucketInfo(bucket BucketIndex) ([]byte, types.Position, types.Size, uint32, error) {
-	data, ok := i.nextPool[bucket]
+func (idx *Index) readBucketInfo(bucket BucketIndex) ([]byte, types.Position, types.Size, uint32, error) {
+	data, ok := idx.nextPool[bucket]
 	if ok {
 		return data, 0, 0, 0, nil
 	}
-	data, ok = i.curPool[bucket]
+	data, ok = idx.curPool[bucket]
 	if ok {
 		return data, 0, 0, 0, nil
 	}
-	bucketPos, err := i.buckets.Get(bucket)
+	bucketPos, err := idx.buckets.Get(bucket)
 	if err != nil {
 		return nil, 0, 0, 0, fmt.Errorf("error reading bucket: %w", err)
 	}
-	recordListSize, err := i.sizeBuckets.Get(bucket)
+	recordListSize, err := idx.sizeBuckets.Get(bucket)
 	if err != nil {
 		return nil, 0, 0, 0, fmt.Errorf("error reading size bucket: %w", err)
 	}
-	localPos, fileNum := localizeBucketPos(bucketPos, i.maxFileSize)
+	localPos, fileNum := localizeBucketPos(bucketPos, idx.maxFileSize)
 	return nil, localPos, recordListSize, fileNum, nil
 }
 
-func (i *Index) readDiskBucket(indexOffset types.Position, recordListSize types.Size, fileNum uint32) (RecordList, error) {
+func (idx *Index) readDiskBucket(indexOffset types.Position, recordListSize types.Size, fileNum uint32) (RecordList, error) {
 	// indexOffset should never be 0 if there is a bucket, because it is always
 	// at lease sizePrefixSize into the stored data.
 	if indexOffset == 0 {
 		return nil, nil
 	}
 
-	file, err := os.Open(indexFileName(i.basePath, fileNum))
+	file, err := os.Open(indexFileName(idx.basePath, fileNum))
 	if err != nil {
 		return nil, err
 	}
@@ -746,9 +778,9 @@ func (i *Index) readDiskBucket(indexOffset types.Position, recordListSize types.
 }
 
 // Get the file offset in the primary storage of a key.
-func (i *Index) Get(key []byte) (types.Block, bool, error) {
+func (idx *Index) Get(key []byte) (types.Block, bool, error) {
 	// Get record list and bucket index.
-	bucket, err := i.getBucketIndex(key)
+	bucket, err := idx.getBucketIndex(key)
 	if err != nil {
 		return types.Block{}, false, err
 	}
@@ -756,9 +788,9 @@ func (i *Index) Get(key []byte) (types.Block, bool, error) {
 	// Here we just need an RLock since there will not be changes over buckets.
 	// So, do not use getRecordsFromBucket and instead only wrap this line of
 	// code in the RLock.
-	i.bucketLk.RLock()
-	cached, indexOffset, recordListSize, fileNum, err := i.readBucketInfo(bucket)
-	i.bucketLk.RUnlock()
+	idx.bucketLk.RLock()
+	cached, indexOffset, recordListSize, fileNum, err := idx.readBucketInfo(bucket)
+	idx.bucketLk.RUnlock()
 	if err != nil {
 		return types.Block{}, false, fmt.Errorf("error reading bucket: %w", err)
 	}
@@ -766,7 +798,7 @@ func (i *Index) Get(key []byte) (types.Block, bool, error) {
 	if cached != nil {
 		records = NewRecordListRaw(cached)
 	} else {
-		records, err = i.readDiskBucket(indexOffset, recordListSize, fileNum)
+		records, err = idx.readDiskBucket(indexOffset, recordListSize, fileNum)
 		if err != nil {
 			return types.Block{}, false, fmt.Errorf("error reading index records from disk: %w", err)
 		}
@@ -777,7 +809,7 @@ func (i *Index) Get(key []byte) (types.Block, bool, error) {
 
 	// The key does not need the prefix that was used to find its bucket. For
 	// simplicity only full bytes are trimmed off.
-	indexKey := stripBucketPrefix(key, i.sizeBits)
+	indexKey := stripBucketPrefix(key, idx.sizeBits)
 
 	fileOffset, found := records.Get(indexKey)
 	return fileOffset, found, nil
@@ -785,55 +817,55 @@ func (i *Index) Get(key []byte) (types.Block, bool, error) {
 
 // Flush writes outstanding work and buffered data to the current index file
 // and updates buckets.
-func (i *Index) Flush() (types.Work, error) {
+func (idx *Index) Flush() (types.Work, error) {
 	// Only one Flush at a time, otherwise the 2nd Flush can swap the pools
 	// while the 1st Flush is still reading the pool being flushed. That could
 	// cause the pool being read by the 1st Flush to be written to
 	// concurrently.
-	i.flushLock.Lock()
-	defer i.flushLock.Unlock()
+	idx.flushLock.Lock()
+	defer idx.flushLock.Unlock()
 
-	i.bucketLk.Lock()
+	idx.bucketLk.Lock()
 	// If no new data, then nothing to do.
-	if len(i.nextPool) == 0 {
-		i.bucketLk.Unlock()
+	if len(idx.nextPool) == 0 {
+		idx.bucketLk.Unlock()
 		return 0, nil
 	}
-	i.curPool = i.nextPool
-	i.nextPool = make(bucketPool, bucketPoolSize)
-	i.outstandingWork = 0
-	i.bucketLk.Unlock()
+	idx.curPool = idx.nextPool
+	idx.nextPool = make(bucketPool, bucketPoolSize)
+	idx.outstandingWork = 0
+	idx.bucketLk.Unlock()
 
-	blks := make([]bucketBlock, 0, len(i.curPool))
+	blks := make([]bucketBlock, 0, len(idx.curPool))
 	var work types.Work
-	for bucket, data := range i.curPool {
-		blk, newWork, err := i.flushBucket(bucket, data)
+	for bucket, data := range idx.curPool {
+		blk, newWork, err := idx.flushBucket(bucket, data)
 		if err != nil {
 			return 0, err
 		}
 		blks = append(blks, bucketBlock{bucket, blk})
 		work += newWork
 	}
-	err := i.writer.Flush()
+	err := idx.writer.Flush()
 	if err != nil {
-		return 0, fmt.Errorf("cannot flush data to index file %s: %w", i.file.Name(), err)
+		return 0, fmt.Errorf("cannot flush data to index file %s: %w", idx.file.Name(), err)
 	}
-	i.bucketLk.Lock()
-	defer i.bucketLk.Unlock()
+	idx.bucketLk.Lock()
+	defer idx.bucketLk.Unlock()
 	for _, blk := range blks {
 		bucket := blk.bucket
-		if err = i.buckets.Put(bucket, blk.blk.Offset); err != nil {
+		if err = idx.buckets.Put(bucket, blk.blk.Offset); err != nil {
 			return 0, fmt.Errorf("error commiting bucket: %w", err)
 		}
-		if err = i.sizeBuckets.Put(bucket, blk.blk.Size); err != nil {
+		if err = idx.sizeBuckets.Put(bucket, blk.blk.Size); err != nil {
 			return 0, fmt.Errorf("error commiting size bucket: %w", err)
 		}
 	}
 
-	if i.updateSig != nil {
+	if idx.updateSig != nil {
 		// Send signal to tell GC there are updates.
 		select {
-		case i.updateSig <- struct{}{}:
+		case idx.updateSig <- struct{}{}:
 		default:
 		}
 	}
@@ -843,24 +875,103 @@ func (i *Index) Flush() (types.Work, error) {
 
 // Sync commits the contents of the current index file to disk. Flush should be
 // called before calling Sync.
-func (i *Index) Sync() error {
-	return i.file.Sync()
+func (idx *Index) Sync() error {
+	return idx.file.Sync()
 }
 
 // Close calls Flush to write work and data to the current index file, and then
 // closes the file.
-func (i *Index) Close() error {
-	if i.updateSig != nil {
-		close(i.updateSig)
-		<-i.gcDone
-		i.updateSig = nil
+func (idx *Index) Close() error {
+	if idx.updateSig != nil {
+		close(idx.updateSig)
+		<-idx.gcDone
+		idx.updateSig = nil
 	}
-	_, err := i.Flush()
+	_, err := idx.Flush()
 	if err != nil {
-		i.file.Close()
+		idx.file.Close()
 		return err
 	}
-	return i.file.Close()
+	if err = idx.file.Close(); err != nil {
+		return err
+	}
+	return idx.saveBucketState()
+}
+func (idx *Index) saveBucketState() error {
+	bucketsFileName := savedBucketsName(idx.basePath)
+	bucketsFileNameTemp := bucketsFileName + ".tmp"
+
+	file, err := os.Create(bucketsFileNameTemp)
+	if err != nil {
+		return err
+	}
+	writer := bufio.NewWriterSize(file, indexBufferSize)
+	buf := make([]byte, types.OffBytesLen+types.SizeBytesLen)
+
+	for i, offset := range idx.buckets {
+		binary.LittleEndian.PutUint64(buf, uint64(offset))
+		binary.LittleEndian.PutUint32(buf[types.OffBytesLen:], uint32(idx.sizeBuckets[i]))
+
+		_, err = writer.Write(buf)
+		if err != nil {
+			return err
+		}
+	}
+	if err = writer.Flush(); err != nil {
+		return err
+	}
+	if err = file.Close(); err != nil {
+		return err
+	}
+
+	log.Debug("Saved bucket state")
+
+	// Only create the file after saving all buckets.
+	return os.Rename(bucketsFileNameTemp, bucketsFileName)
+}
+
+func loadBucketState(ctx context.Context, basePath string, buckets Buckets, sizeBuckets SizeBuckets, maxFileSize uint32) error {
+	if ctx.Err() != nil {
+		return ctx.Err()
+	}
+	bucketsFileName := savedBucketsName(basePath)
+	file, err := os.Open(bucketsFileName)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		e := file.Close()
+		if e != nil {
+			log.Error("Error closing saved buckets file", "err", err)
+		}
+		if e = os.Remove(bucketsFileName); e != nil {
+			log.Error("Error removing saved buckets file", "err", err)
+		}
+	}()
+
+	reader := bufio.NewReaderSize(file, indexBufferSize)
+	buf := make([]byte, types.OffBytesLen+types.SizeBytesLen)
+
+	for i := 0; i < len(buckets); i++ {
+		// Read offset from bucket state.
+		_, err = io.ReadFull(reader, buf)
+		if err != nil {
+			return err
+		}
+		buckets[i] = types.Position(binary.LittleEndian.Uint64(buf))
+		sizeBuckets[i] = types.Size(binary.LittleEndian.Uint32(buf[types.OffBytesLen:]))
+	}
+
+	log.Debug("Loaded saved bucket state")
+	return nil
+}
+
+func RemoveSavedBuckets(basePath string) error {
+	err := os.Remove(savedBucketsName(basePath))
+	if err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	return nil
 }
 
 func (i *Index) OutstandingWork() types.Work {
@@ -1038,4 +1149,20 @@ func localizeBucketPos(pos types.Position, maxFileSize uint32) (types.Position, 
 	// Subtract file offset to get pos within its local file.
 	localPos := pos - (types.Position(fileNum) * types.Position(maxFileSize))
 	return localPos, fileNum
+}
+
+func findLastIndex(basePath string, fileNum uint32) (uint32, error) {
+	var lastFound uint32
+	for {
+		_, err := os.Stat(indexFileName(basePath, fileNum))
+		if err != nil {
+			if os.IsNotExist(err) {
+				break
+			}
+			return 0, err
+		}
+		lastFound = fileNum
+		fileNum++
+	}
+	return lastFound, nil
 }

@@ -15,8 +15,6 @@ import (
 	"github.com/ipld/go-storethehash/store/types"
 )
 
-const DefaultBurstRate = 4 * 1024 * 1024
-
 var log = logging.Logger("storethehash")
 
 type Store struct {
@@ -45,8 +43,18 @@ type Store struct {
 //
 // Specifying 0 for indexSizeBits and indexFileSize results in using their
 // default values. A gcInterval of 0 disables garbage collection.
-func OpenStore(ctx context.Context, path string, primary primary.PrimaryStorage, indexSizeBits uint8, indexFileSize uint32, syncInterval time.Duration, burstRate types.Work, gcInterval time.Duration, immutable bool) (*Store, error) {
-	index, err := index.OpenIndex(ctx, path, primary, indexSizeBits, indexFileSize, gcInterval)
+func OpenStore(ctx context.Context, path string, primary primary.PrimaryStorage, immutable bool, options ...Option) (*Store, error) {
+	c := config{
+		indexSizeBits: defaultIndexSizeBits,
+		indexFileSize: defaultIndexFileSize,
+		syncInterval:  defaultSyncInterval,
+		burstRate:     defaultBurstRate,
+		gcInterval:    defaultGCInterval,
+		gcTimeLimit:   defaultGCTimeLimit,
+	}
+	c.apply(options)
+
+	index, err := index.Open(ctx, path, primary, c.indexSizeBits, c.indexFileSize, c.gcInterval, c.gcTimeLimit)
 	if err != nil {
 		return nil, err
 	}
@@ -60,8 +68,8 @@ func OpenStore(ctx context.Context, path string, primary primary.PrimaryStorage,
 		freelist:     freelist,
 		open:         true,
 		running:      false,
-		syncInterval: syncInterval,
-		burstRate:    burstRate,
+		syncInterval: c.syncInterval,
+		burstRate:    c.burstRate,
 		closed:       make(chan struct{}),
 		closing:      make(chan struct{}),
 		flushNow:     make(chan struct{}, 1),

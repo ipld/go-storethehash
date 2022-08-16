@@ -51,7 +51,7 @@ func newBlockPool() blockPool {
 	}
 }
 
-func OpenMultihashPrimary(path string) (*MultihashPrimary, error) {
+func Open(path string) (*MultihashPrimary, error) {
 	file, err := os.OpenFile(path, os.O_RDWR|os.O_APPEND|os.O_CREATE, 0o644)
 	if err != nil {
 		return nil, err
