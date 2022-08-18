@@ -986,9 +986,9 @@ func (i *Index) OutstandingWork() types.Work {
 // together with the raw record list data.
 type IndexIter struct {
 	// The index data we are iterating over
-	index io.ReadCloser
+	file *os.File
 	// The current position within the index
-	pos types.Position
+	pos int64
 	// The base index file path
 	base string
 	// The current index file number
@@ -1003,7 +1003,7 @@ func NewIndexIter(basePath string, fileNum uint32) *IndexIter {
 }
 
 func (iter *IndexIter) Next() ([]byte, types.Position, bool, error) {
-	if iter.index == nil {
+	if iter.file == nil {
 		file, err := openFileForScan(indexFileName(iter.base, iter.fileNum))
 		if err != nil {
 			if os.IsNotExist(err) {
@@ -1011,47 +1011,48 @@ func (iter *IndexIter) Next() ([]byte, types.Position, bool, error) {
 			}
 			return nil, 0, false, err
 		}
-		iter.index = file
+		iter.file = file
 		iter.pos = 0
 	}
 
-	size, err := readSizePrefix(iter.index)
-	if err != nil {
-		iter.index.Close()
-		if err == io.EOF {
-			iter.index = nil
-			iter.fileNum++
-			return iter.Next()
+	var size uint32
+	sizeBuf := make([]byte, sizePrefixSize)
+	for {
+		_, err := iter.file.ReadAt(sizeBuf, iter.pos)
+		if err != nil {
+			iter.file.Close()
+			if err == io.EOF {
+				iter.file = nil
+				iter.fileNum++
+				return iter.Next()
+			}
+			return nil, 0, false, err
 		}
+		size = binary.LittleEndian.Uint32(sizeBuf)
+		if size&deletedBit != 0 {
+			size ^= deletedBit
+			iter.pos += int64(sizePrefixSize + size)
+		} else {
+			break
+		}
+	}
+	pos := iter.pos + int64(sizePrefixSize)
+	data := make([]byte, size)
+	_, err := iter.file.ReadAt(data, pos)
+	if err != nil {
+		iter.file.Close()
 		return nil, 0, false, err
 	}
 
-	pos := iter.pos + types.Position(sizePrefixSize)
-	iter.pos += types.Position(sizePrefixSize) + types.Position(size)
-	data := make([]byte, size)
-	_, err = io.ReadFull(iter.index, data)
-	if err != nil {
-		iter.index.Close()
-		return nil, 0, false, err
-	}
-	return data, pos, false, nil
+	iter.pos += int64(sizePrefixSize + size)
+	return data, types.Position(pos), false, nil
 }
 
 func (iter *IndexIter) Close() error {
-	if iter.index == nil {
+	if iter.file == nil {
 		return nil
 	}
-	return iter.index.Close()
-}
-
-// Only reads the size prefix of the data and returns it.
-func readSizePrefix(reader io.Reader) (uint32, error) {
-	sizeBuffer := make([]byte, sizePrefixSize)
-	_, err := io.ReadFull(reader, sizeBuffer)
-	if err != nil {
-		return 0, err
-	}
-	return binary.LittleEndian.Uint32(sizeBuffer), nil
+	return iter.file.Close()
 }
 
 func readHeader(filePath string) (Header, error) {
