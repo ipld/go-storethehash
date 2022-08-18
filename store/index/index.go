@@ -201,7 +201,7 @@ func Open(ctx context.Context, path string, primary primary.PrimaryStorage, inde
 
 		err = loadBucketState(ctx, path, buckets, sizeBuckets, maxFileSize)
 		if err != nil {
-			log.Warn("Could not load bucket state, scanning index file", "err", err)
+			log.Warnw("Could not load bucket state, scanning index file", "err", err)
 			lastIndexNum, err = scanIndex(ctx, path, header.FirstFile, buckets, sizeBuckets, maxFileSize)
 			if err != nil {
 				return nil, err
