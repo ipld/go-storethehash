@@ -223,6 +223,7 @@ func TestIndexPutDistinctKey(t *testing.T) {
 
 	// The record list is append only, hence the first record list only contains the first insert
 	var data []byte
+	var hasData bool
 	for {
 		next, _, done, err := iter.Next()
 		require.NoError(t, err)
@@ -230,7 +231,9 @@ func TestIndexPutDistinctKey(t *testing.T) {
 			break
 		}
 		data = next
+		hasData = true
 	}
+	require.True(t, hasData)
 	recordlist := NewRecordList(data)
 	recordIter := recordlist.Iter()
 	var keys [][]byte
