@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"encoding/binary"
 	"fmt"
+	"io"
 	"os"
 	"sync"
 
@@ -125,35 +126,28 @@ func (cp *FreeList) OutstandingWork() types.Work {
 	return cp.outstandingWork
 }
 
-func (cp *FreeList) Iter() (*FreeListIter, error) {
-	return NewFreeListIter(cp.file), nil
+func (cp *FreeList) Iter() (*Iterator, error) {
+	return NewIterator(cp.file), nil
 }
 
-func NewFreeListIter(reader *os.File) *FreeListIter {
-	return &FreeListIter{reader, 0}
+func NewIterator(reader io.Reader) *Iterator {
+	return &Iterator{
+		reader: reader,
+	}
 }
 
-type FreeListIter struct {
-	reader *os.File
-	pos    types.Position
+type Iterator struct {
+	reader io.Reader
 }
 
-func (cpi *FreeListIter) Next() (*types.Block, error) {
-	sizeBuf := make([]byte, types.SizeBytesLen)
-	offBuf := make([]byte, types.OffBytesLen)
-	_, err := cpi.reader.ReadAt(offBuf, int64(cpi.pos))
+func (cpi *Iterator) Next() (*types.Block, error) {
+	data := make([]byte, types.OffBytesLen+types.SizeBytesLen)
+	_, err := io.ReadFull(cpi.reader, data)
 	if err != nil {
 		return nil, err
 	}
-	cpi.pos += types.OffBytesLen
-	offset := binary.LittleEndian.Uint64(offBuf)
-
-	_, err = cpi.reader.ReadAt(sizeBuf, int64(cpi.pos))
-	if err != nil {
-		return nil, err
-	}
-	cpi.pos += types.SizeBytesLen
-	size := binary.LittleEndian.Uint32(sizeBuf)
+	offset := binary.LittleEndian.Uint64(data)
+	size := binary.LittleEndian.Uint32(data[types.OffBytesLen:])
 	return &types.Block{Size: types.Size(size), Offset: types.Position(offset)}, nil
 }
 

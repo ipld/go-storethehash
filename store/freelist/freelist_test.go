@@ -39,7 +39,7 @@ func TestFLPut(t *testing.T) {
 	file, err := os.Open(flPath)
 	t.Cleanup(func() { file.Close() })
 	require.NoError(t, err)
-	iter := freelist.NewFreeListIter(file)
+	iter := freelist.NewIterator(file)
 	for _, expectedBlk := range blks {
 		blk, err := iter.Next()
 		require.NoError(t, err)
