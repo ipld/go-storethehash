@@ -143,7 +143,7 @@ func rebuildIndex(ctx context.Context, indexPath, primaryPath, freelistPath stri
 		return fmt.Errorf("cannot open %s primary at %s: %w", primaryType, newPrimaryPath, err)
 	}
 
-	idx, err = index.Open(ctx, newIndexPath, primaryStore, indexSizeBits, 0, 10*time.Minute, 3*time.Minute)
+	idx, err = index.Open(ctx, newIndexPath, primaryStore, indexSizeBits, 0, 0, 0)
 	if err != nil {
 		return err
 	}
@@ -166,7 +166,7 @@ func rebuildIndex(ctx context.Context, indexPath, primaryPath, freelistPath stri
 		return nil
 	}
 
-	percentIncr := int64(10)
+	percentIncr := int64(1)
 	nextPercent := percentIncr
 	var count int
 
@@ -231,9 +231,17 @@ func rebuildIndex(ctx context.Context, indexPath, primaryPath, freelistPath stri
 		pos += sizePrefixSize + int64(size)
 
 		count++
+
+		if count&1023 == 0 {
+			_, err := idx.Flush()
+			if err != nil {
+				return fmt.Errorf("error flushing index: %w", err)
+			}
+		}
+
 		percent := 100 * pos / inSize
 		if percent >= nextPercent {
-			log.Printf("Wrote index for %d primary records, %d%% complete\n", count, percent)
+			log.Printf("Indexed %d primary records, %d%% complete\n", count, percent)
 			for nextPercent <= percent {
 				nextPercent += percentIncr
 			}
