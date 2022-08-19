@@ -73,7 +73,7 @@ func TestUpdate(t *testing.T) {
 		require.NoError(t, err)
 		t.Cleanup(func() { require.NoError(t, file.Close()) })
 
-		iter := freelist.NewFreeListIter(file)
+		iter := freelist.NewIterator(file)
 		// Check freelist for the only update. Should be the first position
 		blk, err := iter.Next()
 		require.Equal(t, blk.Offset, types.Position(0))
@@ -120,7 +120,7 @@ func TestUpdate(t *testing.T) {
 		require.NoError(t, err)
 		t.Cleanup(func() { require.NoError(t, file.Close()) })
 
-		iter := freelist.NewFreeListIter(file)
+		iter := freelist.NewIterator(file)
 		// Check freelist -- no updates
 		_, err = iter.Next()
 		require.EqualError(t, err, io.EOF.Error())
@@ -170,7 +170,7 @@ func TestUpdate(t *testing.T) {
 		require.NoError(t, err)
 		t.Cleanup(func() { require.NoError(t, file.Close()) })
 
-		iter := freelist.NewFreeListIter(file)
+		iter := freelist.NewIterator(file)
 		// Check freelist -- no updates
 		_, err = iter.Next()
 		require.EqualError(t, err, io.EOF.Error())
@@ -216,7 +216,7 @@ func TestRemove(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, file.Close()) })
 
-	iter := freelist.NewFreeListIter(file)
+	iter := freelist.NewIterator(file)
 	// Check freelist for the only removal. Should be the first position
 	blk, err := iter.Next()
 	require.Equal(t, blk.Offset, types.Position(0))
