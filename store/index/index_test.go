@@ -473,7 +473,6 @@ func TestIndexGet(t *testing.T) {
 
 	// Check that both indexes have same buckets.
 	require.Equal(t, i.buckets, i2.buckets)
-	require.Equal(t, i.sizeBuckets, i2.sizeBuckets)
 }
 
 func TestIndexHeader(t *testing.T) {

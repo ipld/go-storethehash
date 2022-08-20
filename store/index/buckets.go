@@ -35,34 +35,3 @@ func (b Buckets) Get(index BucketIndex) (types.Position, error) {
 	}
 	return b[int(index)], nil
 }
-
-// SizeBuckets contains sizes for all record lists
-//
-// The generic specifies how many bits are used to create the buckets. The number of buckets is
-// 2 ^ bits.
-type SizeBuckets []types.Size
-
-// NewSizeBuckets returns a list of buckets for the given index size in bits
-func NewSizeBuckets(indexSizeBits uint8) (SizeBuckets, error) {
-	if indexSizeBits > 32 {
-		return nil, types.ErrIndexTooLarge
-	}
-	return make(SizeBuckets, 1<<indexSizeBits), nil
-}
-
-// Put updates a bucket value
-func (b SizeBuckets) Put(index BucketIndex, offset types.Size) error {
-	if int(index) > len(b)-1 {
-		return types.ErrOutOfBounds
-	}
-	b[int(index)] = offset
-	return nil
-}
-
-// Get updates returns the value at the given index
-func (b SizeBuckets) Get(index BucketIndex) (types.Size, error) {
-	if int(index) > len(b)-1 {
-		return 0, types.ErrOutOfBounds
-	}
-	return b[int(index)], nil
-}

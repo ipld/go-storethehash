@@ -43,12 +43,10 @@ func TestChunkOldIndex(t *testing.T) {
 	// Allocate old buckets.
 	oldBuckets, err := NewBuckets(bucketBits)
 	require.NoError(t, err)
-	oldSizeBuckets, err := NewSizeBuckets(bucketBits)
-	require.NoError(t, err)
 
 	// Scan the old file into the buckets.
 	t.Log("Scanning old index")
-	err = testScanIndexFile(oldFile, 0, oldBuckets, oldSizeBuckets, 0)
+	err = testScanIndexFile(oldFile, 0, oldBuckets, 0)
 	require.NoError(t, err)
 
 	// Return to beginning of old file.
@@ -66,8 +64,6 @@ func TestChunkOldIndex(t *testing.T) {
 	// Allocate new buckets.
 	newBuckets, err := NewBuckets(bucketBits)
 	require.NoError(t, err)
-	newSizeBuckets, err := NewSizeBuckets(bucketBits)
-	require.NoError(t, err)
 
 	var fileNum, lastFileNum uint32
 	var prevSize int64
@@ -83,7 +79,7 @@ func TestChunkOldIndex(t *testing.T) {
 		fi, err := newFile.Stat()
 		require.NoError(t, err)
 
-		err = testScanIndexFile(newFile, fileNum, newBuckets, newSizeBuckets, prevSize)
+		err = testScanIndexFile(newFile, fileNum, newBuckets, prevSize)
 		newFile.Close()
 		require.NoError(t, err)
 
@@ -97,11 +93,10 @@ func TestChunkOldIndex(t *testing.T) {
 	t.Log("Compare old to new buckets")
 	for i := 0; i < len(oldBuckets); i++ {
 		require.Equal(t, oldBuckets[i], newBuckets[i])
-		require.Equal(t, oldSizeBuckets[i], newSizeBuckets[i])
 	}
 }
 
-func testScanIndexFile(file *os.File, fileNum uint32, buckets Buckets, sizeBuckets SizeBuckets, prevSize int64) error {
+func testScanIndexFile(file *os.File, fileNum uint32, buckets Buckets, prevSize int64) error {
 	buffered := bufio.NewReader(file)
 	sizeBuffer := make([]byte, sizePrefixSize)
 	scratch := make([]byte, 256)
@@ -132,10 +127,6 @@ func testScanIndexFile(file *os.File, fileNum uint32, buckets Buckets, sizeBucke
 
 		bucketPrefix := BucketIndex(binary.LittleEndian.Uint32(data))
 		err = buckets.Put(bucketPrefix, types.Position(pos+prevSize))
-		if err != nil {
-			return err
-		}
-		err = sizeBuckets.Put(bucketPrefix, types.Size(len(data)))
 		if err != nil {
 			return err
 		}
