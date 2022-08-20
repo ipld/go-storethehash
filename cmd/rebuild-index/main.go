@@ -168,7 +168,8 @@ func rebuildIndex(ctx context.Context, indexPath, primaryPath, freelistPath stri
 
 	percentIncr := int64(1)
 	nextPercent := percentIncr
-	var count int
+	var count, prevCount int
+	start := time.Now()
 
 	sizeBuf := make([]byte, sizePrefixSize)
 	scratch := make([]byte, 1024)
@@ -241,7 +242,12 @@ func rebuildIndex(ctx context.Context, indexPath, primaryPath, freelistPath stri
 
 		percent := 100 * pos / inSize
 		if percent >= nextPercent {
-			log.Printf("Indexed %d primary records, %d%% complete\n", count, percent)
+			elapsed := time.Since(start)
+			rate := int(float64(count-prevCount) / elapsed.Seconds())
+			start = time.Now()
+			prevCount = count
+
+			log.Printf("Indexed %d primary records, %d%% complete - %d records/sec\n", count, percent, rate)
 			for nextPercent <= percent {
 				nextPercent += percentIncr
 			}
