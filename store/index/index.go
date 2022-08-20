@@ -909,8 +909,6 @@ func (idx *Index) saveBucketState() error {
 		return err
 	}
 
-	log.Debug("Saved bucket state")
-
 	// Only create the file after saving all buckets.
 	return os.Rename(bucketsFileNameTemp, bucketsFileName)
 }
@@ -934,6 +932,16 @@ func loadBucketState(ctx context.Context, basePath string, buckets Buckets, maxF
 		}
 	}()
 
+	fi, err := file.Stat()
+	if err != nil {
+		return err
+	}
+
+	// If the file is not the expected size then do not use it.
+	if fi.Size() != int64(types.OffBytesLen*len(buckets)) {
+		return fmt.Errorf("bucket state file is wrong size, expected %d actual %d", types.OffBytesLen*len(buckets), fi.Size())
+	}
+
 	reader := bufio.NewReaderSize(file, indexBufferSize)
 	buf := make([]byte, types.OffBytesLen)
 
@@ -946,7 +954,6 @@ func loadBucketState(ctx context.Context, basePath string, buckets Buckets, maxF
 		buckets[i] = types.Position(binary.LittleEndian.Uint64(buf))
 	}
 
-	log.Debug("Loaded saved bucket state")
 	return nil
 }
 
