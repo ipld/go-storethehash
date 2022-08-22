@@ -74,9 +74,7 @@ func TestGC(t *testing.T) {
 	bucketY := 7143210
 	bucketZ := 12228148
 	idx.buckets[bucketY] = 0
-	idx.sizeBuckets[bucketY] = 0
 	idx.buckets[bucketZ] = 0
-	idx.sizeBuckets[bucketZ] = 0
 
 	recordSize := int64(18 + sizePrefixSize)
 
@@ -103,9 +101,7 @@ func TestGC(t *testing.T) {
 	bucketY = 719032
 	bucketZ = 5851659
 	idx.buckets[bucketY] = 0
-	idx.sizeBuckets[bucketY] = 0
 	idx.buckets[bucketZ] = 0
-	idx.sizeBuckets[bucketZ] = 0
 
 	sizeBefore = fi.Size()
 
