@@ -194,7 +194,7 @@ func Open(ctx context.Context, path string, primary primary.PrimaryStorage, inde
 			switch header.PrimaryFileSize {
 			case 0:
 				// Primary file size is not yet known, so may need to remap index.
-				err = remapIndex(ctx, mp, buckets, sizeBuckets, path, headerPath, header)
+				err = remapIndex(ctx, mp, buckets, path, headerPath, header)
 				if err != nil {
 					return nil, err
 				}
@@ -1090,7 +1090,6 @@ func (iter *Iterator) Next() ([]byte, types.Position, bool, error) {
 		}
 		iter.bucketIndex++
 	}
-	recordListSize := iter.index.sizeBuckets[iter.bucketIndex]
 	iter.index.bucketLk.RUnlock()
 
 	data, cached := iter.index.readCached(iter.bucketIndex)
@@ -1108,23 +1107,17 @@ func (iter *Iterator) Next() ([]byte, types.Position, bool, error) {
 		}
 		defer file.Close()
 
-		data = make([]byte, recordListSize)
+		sizeBuf := make([]byte, sizePrefixSize)
+		if _, err = file.ReadAt(sizeBuf, int64(localPos-sizePrefixSize)); err != nil {
+			return nil, 0, false, err
+		}
+		data = make([]byte, binary.LittleEndian.Uint32(sizeBuf))
 		if _, err = file.ReadAt(data, int64(localPos)); err != nil {
 			return nil, 0, false, err
 		}
 	}
 	iter.bucketIndex++
 	return data, bucketPos, false, nil
-}
-
-// Only reads the size prefix of the data and returns it.
-func readSizePrefix(reader io.Reader) (uint32, error) {
-	sizeBuffer := make([]byte, sizePrefixSize)
-	_, err := io.ReadFull(reader, sizeBuffer)
-	if err != nil {
-		return 0, err
-	}
-	return binary.LittleEndian.Uint32(sizeBuffer), nil
 }
 
 func max(a, b int) int {
@@ -1239,7 +1232,7 @@ func copyFile(src, dst string) error {
 // remapping the index files is not completed, there are no files in a
 // partially remapped state. This allows remapping to resume from where it left
 // off, without corrupting any files that were already remapped.
-func remapIndex(ctx context.Context, mp *mhprimary.MultihashPrimary, buckets Buckets, sizeBuckets SizeBuckets, basePath, headerPath string, header Header) error {
+func remapIndex(ctx context.Context, mp *mhprimary.MultihashPrimary, buckets Buckets, basePath, headerPath string, header Header) error {
 	remapper, err := mp.NewIndexRemapper()
 	if err != nil {
 		return err
@@ -1262,6 +1255,7 @@ func remapIndex(ctx context.Context, mp *mhprimary.MultihashPrimary, buckets Buc
 
 	var fileCount, recordCount int
 	var scratch []byte
+	sizeBuf := make([]byte, sizePrefixSize)
 
 	for fileNum, bucketPrefixes := range fileBuckets {
 		if ctx.Err() != nil {
@@ -1291,12 +1285,15 @@ func remapIndex(ctx context.Context, mp *mhprimary.MultihashPrimary, buckets Buc
 		for _, pfx := range bucketPrefixes {
 			// Read the record list from disk and remap the primary file offset
 			// in each record in the record list.
-			size := sizeBuckets[pfx]
+			localPos := buckets[pfx] - (types.Position(fileNum) * types.Position(maxFileSize))
+			if _, err = file.ReadAt(sizeBuf, int64(localPos-sizePrefixSize)); err != nil {
+				return fmt.Errorf("cannot read record list size from index file %s: %w", file.Name(), err)
+			}
+			size := binary.LittleEndian.Uint32(sizeBuf)
 			if len(scratch) < int(size) {
 				scratch = make([]byte, size)
 			}
 			data := scratch[:size]
-			localPos := buckets[pfx] - (types.Position(fileNum) * types.Position(maxFileSize))
 			if _, err = file.ReadAt(data, int64(localPos)); err != nil {
 				return fmt.Errorf("cannot read record list from index file %s: %w", file.Name(), err)
 			}
