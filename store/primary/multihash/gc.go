@@ -39,6 +39,10 @@ func newGC(primary *MultihashPrimary, freeList *freelist.FreeList, gcInterval, g
 
 	go gc.run(gcInterval, gcTimeLimit)
 
+	if freeList != nil {
+		freeList.SetOnUpdate(gc.SignalUpdate)
+	}
+
 	return gc
 }
 
@@ -55,6 +59,9 @@ func (gc *primaryGC) close() {
 	defer gc.cycleLock.Unlock()
 
 	if gc.primary != nil {
+		if gc.freeList != nil {
+			gc.freeList.SetOnUpdate(nil)
+		}
 		close(gc.updateSig)
 		<-gc.done
 		gc.primary = nil

@@ -156,9 +156,6 @@ func Open(path string, freeList *freelist.FreeList, options ...Option) (*Multiha
 		log.Warn("Primary garbage collection disabled")
 	} else {
 		mp.gc = newGC(mp, freeList, cfg.gcInterval, cfg.gcTimeLimit)
-		if freeList != nil {
-			freeList.SetOnUpdate(mp.gc.SignalUpdate)
-		}
 	}
 
 	return mp, nil
