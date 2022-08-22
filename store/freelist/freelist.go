@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"encoding/binary"
 	"fmt"
+	"io"
 	"os"
 	"sync"
 
@@ -20,6 +21,7 @@ type FreeList struct {
 	blockPool       []types.Block
 	poolLk          sync.RWMutex
 	flushLock       sync.Mutex
+	onUpdate        func()
 }
 
 const (
@@ -30,7 +32,7 @@ const (
 	blockPoolSize = 1024
 )
 
-func OpenFreeList(path string) (*FreeList, error) {
+func Open(path string) (*FreeList, error) {
 	file, err := os.OpenFile(path, os.O_RDWR|os.O_APPEND|os.O_CREATE, 0o644)
 	if err != nil {
 		return nil, err
@@ -40,6 +42,13 @@ func OpenFreeList(path string) (*FreeList, error) {
 		writer:    bufio.NewWriterSize(file, blockBufferSize),
 		blockPool: make([]types.Block, 0, blockPoolSize),
 	}, nil
+}
+
+// SetOnUpdate sets a function to call when the freelist is updated.
+func (fl *FreeList) SetOnUpdate(f func()) {
+	fl.flushLock.Lock()
+	defer fl.flushLock.Unlock()
+	fl.onUpdate = f
 }
 
 func (cp *FreeList) Put(blk types.Block) error {
@@ -86,6 +95,10 @@ func (cp *FreeList) Flush() (types.Work, error) {
 	// flushLock is still held, preventing concurrent flushes from changing the
 	// pool or accessing writer.
 
+	if len(blocks) == 0 {
+		return 0, nil
+	}
+
 	var work types.Work
 	for _, record := range blocks {
 		blockWork, err := cp.flushBlock(record)
@@ -97,6 +110,9 @@ func (cp *FreeList) Flush() (types.Work, error) {
 	err := cp.writer.Flush()
 	if err != nil {
 		return 0, fmt.Errorf("cannot flush data to freelist file %s: %w", cp.file.Name(), err)
+	}
+	if cp.onUpdate != nil {
+		cp.onUpdate()
 	}
 
 	return work, nil
@@ -125,35 +141,28 @@ func (cp *FreeList) OutstandingWork() types.Work {
 	return cp.outstandingWork
 }
 
-func (cp *FreeList) Iter() (*FreeListIter, error) {
-	return NewFreeListIter(cp.file), nil
+func (cp *FreeList) Iter() (*Iterator, error) {
+	return NewIterator(cp.file), nil
 }
 
-func NewFreeListIter(reader *os.File) *FreeListIter {
-	return &FreeListIter{reader, 0}
+func NewIterator(reader io.Reader) *Iterator {
+	return &Iterator{
+		reader: reader,
+	}
 }
 
-type FreeListIter struct {
-	reader *os.File
-	pos    types.Position
+type Iterator struct {
+	reader io.Reader
 }
 
-func (cpi *FreeListIter) Next() (*types.Block, error) {
-	sizeBuf := make([]byte, types.SizeBytesLen)
-	offBuf := make([]byte, types.OffBytesLen)
-	_, err := cpi.reader.ReadAt(offBuf, int64(cpi.pos))
+func (cpi *Iterator) Next() (*types.Block, error) {
+	data := make([]byte, types.OffBytesLen+types.SizeBytesLen)
+	_, err := io.ReadFull(cpi.reader, data)
 	if err != nil {
 		return nil, err
 	}
-	cpi.pos += types.OffBytesLen
-	offset := binary.LittleEndian.Uint64(offBuf)
-
-	_, err = cpi.reader.ReadAt(sizeBuf, int64(cpi.pos))
-	if err != nil {
-		return nil, err
-	}
-	cpi.pos += types.SizeBytesLen
-	size := binary.LittleEndian.Uint32(sizeBuf)
+	offset := binary.LittleEndian.Uint64(data)
+	size := binary.LittleEndian.Uint32(data[types.OffBytesLen:])
 	return &types.Block{Size: types.Size(size), Offset: types.Position(offset)}, nil
 }
 
@@ -168,4 +177,48 @@ func (fl *FreeList) StorageSize() (int64, error) {
 	}
 
 	return fi.Size(), nil
+}
+
+// ToGC moves the current freelist file into a ".gc" file and creates a new
+// freelist file. This allows the garbage collector to the process the .gc
+// freelist file while allowing the freelist to continue to operate on a new
+// file.
+func (cp *FreeList) ToGC() (string, error) {
+	fileName := cp.file.Name()
+	workFilePath := fileName + ".gc"
+
+	// If a .gc file already exists, return the existing one becuase it means
+	// that GC did not finish processing it.
+	_, err := os.Stat(workFilePath)
+	if !os.IsNotExist(err) {
+		if err != nil {
+			return "", err
+		}
+		return workFilePath, nil
+	}
+
+	_, err = cp.Flush()
+	if err != nil {
+		return "", err
+	}
+
+	cp.flushLock.Lock()
+	defer cp.flushLock.Unlock()
+
+	// Flush any buffered data and close the file. Safe to do with flushLock
+	// acquired.
+	cp.writer.Flush()
+	cp.file.Close()
+	err = os.Rename(fileName, workFilePath)
+	if err != nil {
+		return "", err
+	}
+
+	cp.file, err = os.OpenFile(fileName, os.O_RDWR|os.O_APPEND|os.O_CREATE, 0o644)
+	if err != nil {
+		return "", err
+	}
+	cp.writer.Reset(cp.file)
+
+	return workFilePath, nil
 }

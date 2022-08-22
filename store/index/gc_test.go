@@ -4,12 +4,10 @@ import (
 	"context"
 	"encoding/binary"
 	"fmt"
-	"io"
 	"os"
 	"path/filepath"
 	"testing"
 
-	mhprimary "github.com/ipld/go-storethehash/store/primary/multihash"
 	"github.com/stretchr/testify/require"
 )
 
@@ -21,12 +19,8 @@ func TestGC(t *testing.T) {
 	err := copyFile(testIndexPath, indexPath)
 	require.NoError(t, err)
 
-	dataPath := filepath.Join(tempDir, "storethehash.data")
-	primary, err := mhprimary.Open(dataPath)
-	require.NoError(t, err)
-	defer primary.Close()
-
-	idx, err := Open(context.Background(), indexPath, primary, 24, 1024, 0, 0, testFCSize)
+	// Open index and with nil primary to avoid attempting to remap.
+	idx, err := Open(context.Background(), indexPath, nil, 24, 1024, 0, 0, testFCSize)
 	require.NoError(t, err)
 	defer idx.Close()
 
@@ -49,7 +43,7 @@ func TestGC(t *testing.T) {
 	require.NoError(t, RemoveSavedBuckets(indexPath))
 
 	// Open the index with the duplicated files.
-	idx, err = Open(context.Background(), indexPath, primary, 24, 1024, 0, 0, testFCSize)
+	idx, err = Open(context.Background(), indexPath, nil, 24, 1024, 0, 0, testFCSize)
 	require.NoError(t, err)
 	defer idx.Close()
 
@@ -152,21 +146,4 @@ func TestGC(t *testing.T) {
 	require.True(t, deleted)
 	require.Equal(t, size1Before+sizePrefixSize+size1Before, size)
 	file.Close()
-}
-
-func copyFile(src, dst string) error {
-	fin, err := os.Open(src)
-	if err != nil {
-		return err
-	}
-	defer fin.Close()
-
-	fout, err := os.Create(dst)
-	if err != nil {
-		return err
-	}
-	defer fout.Close()
-
-	_, err = io.Copy(fout, fin)
-	return err
 }

@@ -12,6 +12,7 @@ import (
 	"github.com/ipld/go-storethehash/store/freelist"
 	"github.com/ipld/go-storethehash/store/index"
 	"github.com/ipld/go-storethehash/store/primary"
+	mhprimary "github.com/ipld/go-storethehash/store/primary/multihash"
 	"github.com/ipld/go-storethehash/store/types"
 )
 
@@ -38,12 +39,11 @@ type Store struct {
 	immutable    bool
 }
 
-// OpenStore opens the index and freelist and returns a Store with the given
-// primary.
+// OpenStore opens the index and returns a Store with the given primary and
+// freelist.
 //
-// Specifying 0 for indexSizeBits and indexFileSize results in using their
-// default values. A gcInterval of 0 disables garbage collection.
-func OpenStore(ctx context.Context, path string, primary primary.PrimaryStorage, immutable bool, options ...Option) (*Store, error) {
+// Calling Store.Close closes the primary and freelist.
+func OpenStore(ctx context.Context, path string, primary primary.PrimaryStorage, freeList *freelist.FreeList, immutable bool, options ...Option) (*Store, error) {
 	c := config{
 		fileCacheSize: defaultFileCacheSize,
 		indexSizeBits: defaultIndexSizeBits,
@@ -59,14 +59,16 @@ func OpenStore(ctx context.Context, path string, primary primary.PrimaryStorage,
 	if err != nil {
 		return nil, err
 	}
-	freelist, err := freelist.OpenFreeList(path + ".free")
-	if err != nil {
-		return nil, err
+
+	mp, ok := primary.(*mhprimary.MultihashPrimary)
+	if ok && mp != nil {
+		mp.EnableGCIndexUpdates(index.Update)
 	}
+
 	store := &Store{
 		lastFlush:    time.Now(),
 		index:        index,
-		freelist:     freelist,
+		freelist:     freeList,
 		open:         true,
 		running:      false,
 		syncInterval: c.syncInterval,
@@ -96,7 +98,9 @@ func (s *Store) run() {
 	for {
 		select {
 		case <-s.flushNow:
-			s.Flush()
+			if err := s.Flush(); err != nil {
+				s.setErr(err)
+			}
 		case <-s.closing:
 			d.Stop()
 			select {
@@ -219,9 +223,9 @@ func (s *Store) Put(key []byte, value []byte) error {
 		if err != nil {
 			return err
 		}
-		// We need to compare to the resulting indexKey for the storedKey.
-		// Two keys may point to same IndexKey (i.e. two CIDS same multihash),
-		// and they need to be treated as the same key.
+		// We need to compare to the resulting indexKey to the storedKey. Two
+		// keys may point to same IndexKey (i.e. two CIDS same multihash), and
+		// they need to be treated as the same key.
 		if storedKey != nil {
 			// if we're not accepting updates, this is the point we bail --
 			// the identical key is in primary storage, we don't do update operations
@@ -419,7 +423,7 @@ func (s *Store) outstandingWork() bool {
 
 // Flush writes outstanding work and buffered data to the primary, index, and
 // freelist files. It then syncs these files to permanent storage.
-func (s *Store) Flush() {
+func (s *Store) Flush() error {
 	lastFlush := time.Now()
 
 	s.rateLk.Lock()
@@ -427,13 +431,12 @@ func (s *Store) Flush() {
 	s.rateLk.Unlock()
 
 	if !s.outstandingWork() {
-		return
+		return nil
 	}
 
 	work, err := s.commit()
 	if err != nil {
-		s.setErr(err)
-		return
+		return err
 	}
 
 	now := time.Now()
@@ -445,6 +448,8 @@ func (s *Store) Flush() {
 		s.rate = rate
 		s.rateLk.Unlock()
 	}
+
+	return nil
 }
 
 func (s *Store) Has(key []byte) (bool, error) {

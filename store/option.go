@@ -72,7 +72,8 @@ func BurstRate(burstRate uint64) Option {
 	}
 }
 
-// GCInterval is the amount of time to wait between GC cycles.
+// GCInterval is the amount of time to wait between GC cycles. A value of 0
+// disabled garbage collection.
 func GCInterval(gcInterval time.Duration) Option {
 	return func(c *config) {
 		c.gcInterval = gcInterval

@@ -15,7 +15,7 @@ import (
 func TestFLPut(t *testing.T) {
 	tempDir := t.TempDir()
 	flPath := filepath.Join(tempDir, "storethehash.free")
-	fl, err := freelist.OpenFreeList(flPath)
+	fl, err := freelist.Open(flPath)
 	require.NoError(t, err)
 
 	blks := generateFreeListEntries(100)
@@ -35,11 +35,10 @@ func TestFLPut(t *testing.T) {
 	err = fl.Close()
 	require.NoError(t, err)
 
-	// Skip header
 	file, err := os.Open(flPath)
 	t.Cleanup(func() { file.Close() })
 	require.NoError(t, err)
-	iter := freelist.NewFreeListIter(file)
+	iter := freelist.NewIterator(file)
 	for _, expectedBlk := range blks {
 		blk, err := iter.Next()
 		require.NoError(t, err)
@@ -48,8 +47,38 @@ func TestFLPut(t *testing.T) {
 	}
 	_, err = iter.Next()
 	require.EqualError(t, err, io.EOF.Error())
+
 	err = file.Close()
 	require.NoError(t, err)
+}
+
+func TestToGC(t *testing.T) {
+	tempDir := t.TempDir()
+	flPath := filepath.Join(tempDir, "storethehash.free")
+	fl, err := freelist.Open(flPath)
+	require.NoError(t, err)
+
+	blks := generateFreeListEntries(100)
+	for _, blk := range blks {
+		err := fl.Put(blk)
+		require.NoError(t, err)
+	}
+	_, err = fl.Flush()
+	require.NoError(t, err)
+
+	flsize, err := fl.StorageSize()
+	require.NoError(t, err)
+
+	gcfile, err := fl.ToGC()
+	require.NoError(t, err)
+
+	fi, err := os.Stat(gcfile)
+	require.NoError(t, err)
+	require.Equal(t, flsize, fi.Size())
+
+	flsize, err = fl.StorageSize()
+	require.NoError(t, err)
+	require.Zero(t, flsize)
 }
 
 func generateFreeListEntries(n int) []types.Block {

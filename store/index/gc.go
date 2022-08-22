@@ -295,12 +295,18 @@ func (index *Index) reapIndexRecords(ctx context.Context, fileNum uint32, indexP
 			if freeAt > busyAt {
 				// Previous record free, so merge this record into the last.
 				freeAtSize += sizePrefixSize + size
-				binary.LittleEndian.PutUint32(sizeBuf, freeAtSize|deletedBit)
-				_, err = file.WriteAt(sizeBuf, freeAt)
-				if err != nil {
-					return false, fmt.Errorf("cannot write to index file %s: %w", file.Name(), err)
+				if freeAtSize >= deletedBit {
+					log.Warn("Records are too large to merge")
+					freeAt = pos
+					freeAtSize = size
+				} else {
+					binary.LittleEndian.PutUint32(sizeBuf, freeAtSize|deletedBit)
+					_, err = file.WriteAt(sizeBuf, freeAt)
+					if err != nil {
+						return false, fmt.Errorf("cannot write to index file %s: %w", file.Name(), err)
+					}
+					mergedCount++
 				}
-				mergedCount++
 			} else {
 				// Previous record was not free, so mark new free position.
 				freeAt = pos
@@ -336,23 +342,23 @@ func (index *Index) reapIndexRecords(ctx context.Context, fileNum uint32, indexP
 			if freeAt > busyAt {
 				// Merge this free record into the last
 				freeAtSize += sizePrefixSize + size
-				binary.LittleEndian.PutUint32(sizeBuf, freeAtSize|deletedBit)
-				_, err = file.WriteAt(sizeBuf, freeAt)
-				if err != nil {
-					return false, fmt.Errorf("cannot write to index file %s: %w", file.Name(), err)
+				if freeAtSize >= deletedBit {
+					log.Warn("Records are too large to merge")
+					freeAt = pos
+					freeAtSize = size
+				} else {
+					mergedCount++
 				}
-				mergedCount++
 			} else {
-				// Mark the record as deleted by setting the highest bit in the size. That
-				// bit is otherwise unused since the maximum filesize is 2^30.
-				binary.LittleEndian.PutUint32(sizeBuf, size|deletedBit)
-				_, err = file.WriteAt(sizeBuf, pos)
-				if err != nil {
-					return false, fmt.Errorf("cannot write to index file %s: %w", file.Name(), err)
-				}
-
 				freeAt = pos
 				freeAtSize = size
+			}
+
+			// Mark the record as deleted by setting the highest bit in the size. This assumes that
+			// the size of an individual index record will always be less than 2^30.
+			binary.LittleEndian.PutUint32(sizeBuf, freeAtSize|deletedBit)
+			if _, err = file.WriteAt(sizeBuf, freeAt); err != nil {
+				return false, fmt.Errorf("cannot write to index file %s: %w", file.Name(), err)
 			}
 			freedCount++
 		}
