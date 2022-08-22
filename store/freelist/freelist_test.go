@@ -57,6 +57,7 @@ func TestToGC(t *testing.T) {
 	flPath := filepath.Join(tempDir, "storethehash.free")
 	fl, err := freelist.Open(flPath)
 	require.NoError(t, err)
+	t.Cleanup(func() { fl.Close() })
 
 	blks := generateFreeListEntries(100)
 	for _, blk := range blks {
