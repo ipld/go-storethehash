@@ -1314,7 +1314,7 @@ func remapIndex(ctx context.Context, mp *mhprimary.MultihashPrimary, buckets Buc
 		}
 
 		if err = file.Close(); err != nil {
-			log.Errorw("Error closeing remapped index file", "err", err, "path", fileName)
+			log.Errorw("Error closing remapped index file", "err", err, "path", fileName)
 		}
 
 		// Create a ".remapped" file to indicate this file was remapped, and
