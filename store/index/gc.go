@@ -296,7 +296,7 @@ func (index *Index) reapIndexRecords(ctx context.Context, fileNum uint32, indexP
 				// Previous record free, so merge this record into the last.
 				freeAtSize += sizePrefixSize + size
 				if freeAtSize >= deletedBit {
-					log.Warn("Records are too large to merge")
+					log.Warnf("Records are too large to merge %d >= %d", freeAtSize, deletedBit)
 					freeAt = pos
 					freeAtSize = size
 				} else {
