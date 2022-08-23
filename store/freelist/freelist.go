@@ -180,7 +180,7 @@ func (fl *FreeList) StorageSize() (int64, error) {
 }
 
 // ToGC moves the current freelist file into a ".gc" file and creates a new
-// freelist file. This allows the garbage collector to the process the .gc
+// freelist file. This allows the garbage collector to then process the .gc
 // freelist file while allowing the freelist to continue to operate on a new
 // file.
 func (cp *FreeList) ToGC() (string, error) {
