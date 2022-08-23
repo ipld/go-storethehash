@@ -101,7 +101,7 @@ func Open(path string, freeList *freelist.FreeList, options ...Option) (*Multiha
 	header, err := readHeader(headerPath)
 	if os.IsNotExist(err) {
 		// If header does not exist, then upgrade primary.
-		_, err := upgradePrimary(context.Background(), path, headerPath, cfg.primaryFileSize, freeList)
+		lastPrimaryNum, err = upgradePrimary(context.Background(), path, headerPath, cfg.primaryFileSize, freeList)
 		if err != nil {
 			return nil, err
 		}

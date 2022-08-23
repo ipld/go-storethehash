@@ -50,7 +50,7 @@ func TestUpgradePrimary(t *testing.T) {
 	headerPath := newPrimaryPath + ".info"
 	updated, err := upgradePrimary(context.Background(), newPrimaryPath, headerPath, testFileSizeLimit, freeList)
 	require.NoError(t, err)
-	require.True(t, updated)
+	require.NotZero(t, updated)
 
 	lastChunkNum, err := findLastPrimary(newPrimaryPath, 0)
 	require.NoError(t, err)
@@ -110,7 +110,7 @@ func TestUpgradePrimary(t *testing.T) {
 	// Run upgrade again to make sure it does nothing.
 	updated, err = upgradePrimary(context.Background(), newPrimaryPath, headerPath, testFileSizeLimit, freeList)
 	require.NoError(t, err)
-	require.False(t, updated)
+	require.Zero(t, updated)
 }
 
 func testScanPrimaryFile(file *os.File) ([][]byte, error) {

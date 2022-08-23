@@ -184,7 +184,7 @@ func (gc *primaryGC) gc(ctx context.Context) (int, error) {
 
 		dead, err := gc.reapRecords(ctx, fileNum)
 		if err != nil {
-			return 0, fmt.Errorf("cannot reap records in primary file %s: %w", filePath, err)
+			return 0, err
 		}
 
 		if dead && fileNum == header.FirstFile {
@@ -283,7 +283,15 @@ func (gc *primaryGC) reapRecords(ctx context.Context, fileNum uint32) (bool, err
 		pos += sizePrefixSize + int64(size)
 	}
 
-	log.Infow("Merged free index records", "merged", mergedCount, "file", fileName)
+	log.Infow("Merged free primary records", "merged", mergedCount, "file", fileName)
+
+	// If updateIndex is not set, then do not truncate files because index
+	// remapping may not have completed yet.
+	//
+	// No ability to move primary records without being able to update index.
+	if gc.updateIndex == nil {
+		return false, nil
+	}
 
 	// If there is a span of free records at end of file, truncate file.
 	if freeAt > busyAt {
@@ -302,11 +310,6 @@ func (gc *primaryGC) reapRecords(ctx context.Context, fileNum uint32) (bool, err
 	// If only known busy location was freed, but file is not empty, then start
 	// over next gc cycle.
 	if busyAt == -1 {
-		return false, nil
-	}
-
-	// No ability to move primary records without being able to update index.
-	if gc.updateIndex == nil {
 		return false, nil
 	}
 

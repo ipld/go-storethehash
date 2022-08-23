@@ -8,7 +8,6 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"time"
 
 	"github.com/ipld/go-storethehash/store/freelist"
 	"github.com/ipld/go-storethehash/store/types"
@@ -53,11 +52,12 @@ func (mp *MultihashPrimary) NewIndexRemapper() (*IndexRemapper, error) {
 
 func (ir *IndexRemapper) RemapOffset(pos types.Position) (types.Position, error) {
 	fileNum := ir.firstFile
+	newPos := int64(pos)
 	for _, size := range ir.sizes {
-		if pos < types.Position(size) {
-			return absolutePrimaryPos(pos, fileNum, ir.maxFileSize), nil
+		if newPos < size {
+			return absolutePrimaryPos(types.Position(newPos), fileNum, ir.maxFileSize), nil
 		}
-		pos -= types.Position(size)
+		newPos -= size
 		fileNum++
 	}
 	return 0, fmt.Errorf("cannot convert out-of-range primary position: %d", pos)
@@ -67,23 +67,23 @@ func (ir *IndexRemapper) FileSize() uint32 {
 	return ir.maxFileSize
 }
 
-func upgradePrimary(ctx context.Context, filePath, headerPath string, maxFileSize uint32, freeList *freelist.FreeList) (bool, error) {
+func upgradePrimary(ctx context.Context, filePath, headerPath string, maxFileSize uint32, freeList *freelist.FreeList) (uint32, error) {
 	// If header already exists, or old primary does not exist, then no upgrade.
 	_, err := os.Stat(headerPath)
 	if !os.IsNotExist(err) {
 		// Header already exists, do nothing.
-		return false, nil
+		return 0, nil
 	}
 	if _, err = os.Stat(filePath); err != nil {
 		if os.IsNotExist(err) {
 			// No primary to upgrade.
-			return false, nil
+			return 0, nil
 		}
-		return false, err
+		return 0, err
 	}
 
 	if ctx.Err() != nil {
-		return false, ctx.Err()
+		return 0, ctx.Err()
 	}
 
 	log.Infow("Upgrading primary storage and splitting into separate files", "newVersion", PrimaryVersion, "fileSize", maxFileSize)
@@ -94,26 +94,26 @@ func upgradePrimary(ctx context.Context, filePath, headerPath string, maxFileSiz
 		// if there is a failure during this phase.
 		err := applyFreeList(ctx, freeList, filePath)
 		if err != nil {
-			return false, fmt.Errorf("could not apply freelist to primary: %w", err)
+			return 0, fmt.Errorf("could not apply freelist to primary: %w", err)
 		}
 	}
 
 	fileNum, err := chunkOldPrimary(ctx, filePath, int64(maxFileSize))
 	if err != nil {
-		return false, err
+		return 0, err
 	}
 
 	if err = writeHeader(headerPath, newHeader(maxFileSize)); err != nil {
-		return false, err
+		return 0, err
 	}
 
 	if err = os.Remove(filePath); err != nil {
-		return false, err
+		return 0, err
 	}
 
-	log.Infow("Replaced old primary with multiple files", "replaced", filePath, "files", fileNum)
+	log.Infow("Replaced old primary with multiple files", "replaced", filePath, "files", fileNum+1)
 	log.Infof("Upgraded primary from version 0 to %d", PrimaryVersion)
-	return true, nil
+	return fileNum, nil
 }
 
 func chunkOldPrimary(ctx context.Context, name string, fileSizeLimit int64) (uint32, error) {
@@ -137,6 +137,7 @@ func chunkOldPrimary(ctx context.Context, name string, fileSizeLimit int64) (uin
 	if err != nil {
 		return 0, err
 	}
+	log.Infow("Upgrade created primary file", "file", filepath.Base(outName))
 	writer := bufio.NewWriter(outFile)
 
 	sizeBuf := make([]byte, sizePrefixSize)
@@ -192,16 +193,13 @@ func chunkOldPrimary(ctx context.Context, name string, fileSizeLimit int64) (uin
 			if ctx.Err() != nil {
 				return 0, ctx.Err()
 			}
-			log.Infow("Upgrade created primary file", "file", filepath.Base(outName))
 			fileNum++
 			outName = primaryFileName(name, fileNum)
 			outFile, err = createFileAppend(outName)
 			if err != nil {
-				if os.IsNotExist(err) {
-					break
-				}
 				return 0, err
 			}
+			log.Infow("Upgrade created primary file", "file", filepath.Base(outName))
 			writer.Reset(outFile)
 			written = 0
 		}
@@ -211,8 +209,6 @@ func chunkOldPrimary(ctx context.Context, name string, fileSizeLimit int64) (uin
 		if err = writer.Flush(); err != nil {
 			return 0, err
 		}
-		log.Infow("Upgrade created primary file", "file", filepath.Base(outName))
-
 	}
 	outFile.Close()
 	return fileNum, nil
@@ -260,9 +256,10 @@ func applyFreeList(ctx context.Context, freeList *freelist.FreeList, filePath st
 		primarySize := fi.Size()
 
 		total := int(flSize / (types.OffBytesLen + types.SizeBytesLen))
-		startTime := time.Now()
 		flIter := freelist.NewIterator(bufio.NewReader(flFile))
 		sizeBuf := make([]byte, sizePrefixSize)
+		percentIncr := 10
+		nextPercent := percentIncr
 
 		for {
 			free, err := flIter.Next()
@@ -302,10 +299,11 @@ func applyFreeList(ctx context.Context, freeList *freelist.FreeList, filePath st
 
 			count++
 
-			// Log every 5 minutes, do time check every 2^20 records.
-			if count&1024*1024-1 == 0 && time.Since(startTime) >= 5*time.Minute {
-				log.Infof("Processed %d of %d freelist records: %d%% done", count, total, 100*count/total)
-				startTime = time.Now()
+			// Log at every percent increment.
+			percent := 100 * count / total
+			if percent >= nextPercent {
+				log.Infof("Processed %d of %d freelist records: %d%% done", count, total, percent)
+				nextPercent += percentIncr
 			}
 		}
 		log.Infow("Marked primary records from freelist as deleted", "count", count)
