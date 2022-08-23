@@ -83,8 +83,8 @@ func (gc *primaryGC) run(gcInterval, gcTimeLimit time.Duration) {
 	var gcDone chan struct{}
 	hasUpdate := true
 
-	// Run 1st GC 5 minute after startup.
-	t := time.NewTimer(15 * time.Second) //5 * time.Minute)
+	// Run 1st GC 7 minutes after startup.
+	t := time.NewTimer(7 * time.Minute)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
