@@ -41,10 +41,12 @@ type Record struct {
 // The underlying data is a continuous range of bytes. The format is:
 //
 // ```text
-//     |                  Once                  |      Repeated     |
-//     |                                        |                   |
-//     |                 4 bytes                | Variable size | … |
-//     | Bit value used to determine the bucket |     Record    | … |
+//
+//	|                  Once                  |      Repeated     |
+//	|                                        |                   |
+//	|                 4 bytes                | Variable size | … |
+//	| Bit value used to determine the bucket |     Record    | … |
+//
 // ```
 type RecordList []byte
 
@@ -210,8 +212,10 @@ func (r *Record) NextPos() int {
 // The format is:
 //
 // ```text
-//     |         8 bytes        |      1 byte     | Variable size < 256 bytes |
-//     | Pointer to actual data | Size of the key |            Key            |
+//
+//	|         8 bytes        |      1 byte     | Variable size < 256 bytes |
+//	| Pointer to actual data | Size of the key |            Key            |
+//
 // ```
 func AddKeyPosition(data []byte, keyPos KeyPositionPair) []byte {
 	size := byte(len(keyPos.Key))
