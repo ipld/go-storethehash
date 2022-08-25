@@ -23,7 +23,7 @@ type primaryGC struct {
 	primary     *MultihashPrimary
 	updateSig   chan struct{}
 	done        chan struct{}
-	cycleLock   sync.Mutex
+	updateMutex sync.Mutex
 	updateIndex UpdateIndexFunc
 }
 
@@ -55,22 +55,16 @@ func (gc *primaryGC) SignalUpdate() {
 }
 
 func (gc *primaryGC) close() {
-	gc.cycleLock.Lock()
-	defer gc.cycleLock.Unlock()
-
-	if gc.primary != nil {
-		if gc.freeList != nil {
-			gc.freeList.SetOnUpdate(nil)
-		}
-		close(gc.updateSig)
-		<-gc.done
-		gc.primary = nil
+	if gc.freeList != nil {
+		gc.freeList.SetOnUpdate(nil)
 	}
+	close(gc.updateSig)
+	<-gc.done
 }
 
 func (gc *primaryGC) setUpdateIndex(updateIndex UpdateIndexFunc) {
-	gc.cycleLock.Lock()
-	defer gc.cycleLock.Unlock()
+	gc.updateMutex.Lock()
+	defer gc.updateMutex.Unlock()
 	gc.updateIndex = updateIndex
 }
 
@@ -145,9 +139,6 @@ func (gc *primaryGC) run(gcInterval, gcTimeLimit time.Duration) {
 // gc searches for and removes stale index files. Returns the number of unused
 // index files that were removed.
 func (gc *primaryGC) gc(ctx context.Context) (int, error) {
-	gc.cycleLock.Lock()
-	defer gc.cycleLock.Unlock()
-
 	affectedSet, err := processFreeList(ctx, gc.freeList, gc.primary.basePath, gc.primary.maxFileSize)
 	if err != nil {
 		return 0, fmt.Errorf("cannot process freelist: %w", err)
@@ -289,7 +280,10 @@ func (gc *primaryGC) reapRecords(ctx context.Context, fileNum uint32) (bool, err
 	// remapping may not have completed yet.
 	//
 	// No ability to move primary records without being able to update index.
-	if gc.updateIndex == nil {
+	gc.updateMutex.Lock()
+	updateIndex := gc.updateIndex
+	gc.updateMutex.Unlock()
+	if updateIndex == nil {
 		return false, nil
 	}
 
@@ -353,7 +347,7 @@ func (gc *primaryGC) reapRecords(ctx context.Context, fileNum uint32) (bool, err
 				return false, fmt.Errorf("cannot put new primary record: %w", err)
 			}
 			// Update the index with the new primary location.
-			if err = gc.updateIndex(indexKey, fileOffset); err != nil {
+			if err = updateIndex(indexKey, fileOffset); err != nil {
 				return false, fmt.Errorf("cannot update index with new record location: %w", err)
 			}
 			log.Infow("Moved record from end of low-use file", "from", fileName)
