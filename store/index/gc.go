@@ -133,14 +133,14 @@ func (index *Index) freeUnusedFiles(ctx context.Context) (int, error) {
 	busySet := make(map[uint32]struct{})
 	maxFileSize := index.maxFileSize
 
-	index.bucketLk.Lock()
+	index.bucketLk.RLock()
 	for _, offset := range index.buckets {
 		ok, fileNum := bucketPosToFileNum(offset, maxFileSize)
 		if ok {
 			busySet[fileNum] = struct{}{}
 		}
 	}
-	index.bucketLk.Unlock()
+	index.bucketLk.RUnlock()
 
 	if ctx.Err() != nil {
 		return 0, ctx.Err()
@@ -335,9 +335,9 @@ func (index *Index) gcIndexFile(ctx context.Context, fileNum uint32, indexPath s
 }
 
 func (index *Index) busy(bucketPrefix BucketIndex, localPos int64, fileNum uint32) (bool, error) {
-	index.bucketLk.Lock()
+	index.bucketLk.RLock()
 	bucketPos, err := index.buckets.Get(bucketPrefix)
-	index.bucketLk.Unlock()
+	index.bucketLk.RUnlock()
 	if err != nil {
 		return false, err
 	}
