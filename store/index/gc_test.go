@@ -26,12 +26,12 @@ func TestGC(t *testing.T) {
 	require.NoError(t, err)
 	defer primary.Close()
 
-	idx, err := Open(context.Background(), indexPath, primary, 24, 1024, 0, 0)
+	idx, err := Open(context.Background(), indexPath, primary, 24, 1024, 0, 0, false)
 	require.NoError(t, err)
 	defer idx.Close()
 
 	// All index files in use, so gc should not remove any files.
-	count, err := idx.gc(context.Background())
+	count, err := idx.gc(context.Background(), true)
 	require.NoError(t, err)
 	require.Equal(t, 0, count)
 
@@ -48,17 +48,17 @@ func TestGC(t *testing.T) {
 	require.NoError(t, RemoveSavedBuckets(indexPath))
 
 	// Open the index with the duplicated files.
-	idx, err = Open(context.Background(), indexPath, primary, 24, 1024, 0, 0)
+	idx, err = Open(context.Background(), indexPath, primary, 24, 1024, 0, 0, false)
 	require.NoError(t, err)
 	defer idx.Close()
 
 	// GC should now remove the first 2 files only.
-	count, err = idx.gc(context.Background())
+	count, err = idx.gc(context.Background(), true)
 	require.NoError(t, err)
 	require.Equal(t, 2, count)
 
 	// Another GC should not remove files.
-	count, err = idx.gc(context.Background())
+	count, err = idx.gc(context.Background(), true)
 	require.NoError(t, err)
 	require.Equal(t, 0, count)
 
@@ -85,7 +85,7 @@ func TestGC(t *testing.T) {
 	t.Log("File size before truncation:", sizeBefore)
 
 	// Run GC and check that second to last file was truncated by two records.
-	count, err = idx.gc(context.Background())
+	count, err = idx.gc(context.Background(), true)
 	require.NoError(t, err)
 	require.Equal(t, count, 0)
 
@@ -124,7 +124,7 @@ func TestGC(t *testing.T) {
 	t.Log("Record size before:", size1Before)
 
 	// Run GC and check that first and second records were merged into one free record.
-	count, err = idx.gc(context.Background())
+	count, err = idx.gc(context.Background(), true)
 	require.NoError(t, err)
 	require.Equal(t, count, 0)
 

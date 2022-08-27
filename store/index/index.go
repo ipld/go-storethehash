@@ -151,7 +151,7 @@ type bucketPool map[BucketIndex][]byte
 //
 // Specifying 0 for indexSizeBits and maxFileSize results in using their
 // default values. A gcInterval of 0 disables garbage collection.
-func Open(ctx context.Context, path string, primary primary.PrimaryStorage, indexSizeBits uint8, maxFileSize uint32, gcInterval, gcTimeLimit time.Duration) (*Index, error) {
+func Open(ctx context.Context, path string, primary primary.PrimaryStorage, indexSizeBits uint8, maxFileSize uint32, gcInterval, gcTimeLimit time.Duration, gcScanUnused bool) (*Index, error) {
 	var file *os.File
 	headerPath := filepath.Clean(path) + ".info"
 
@@ -243,7 +243,7 @@ func Open(ctx context.Context, path string, primary primary.PrimaryStorage, inde
 	} else {
 		idx.updateSig = make(chan struct{}, 1)
 		idx.gcDone = make(chan struct{})
-		go idx.garbageCollector(gcInterval, gcTimeLimit)
+		go idx.garbageCollector(gcInterval, gcTimeLimit, gcScanUnused)
 	}
 
 	return idx, nil

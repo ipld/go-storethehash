@@ -10,6 +10,7 @@ import (
 	"time"
 
 	logging "github.com/ipfs/go-log/v2"
+	"github.com/ipld/go-storethehash/store/types"
 )
 
 var log = logging.Logger("storethehash/index")
@@ -17,7 +18,7 @@ var log = logging.Logger("storethehash/index")
 // garbageCollector is a goroutine that runs periodically to search for and
 // remove stale index files. It runs every gcInterval, if there have been any
 // index updates.
-func (index *Index) garbageCollector(gcInterval, gcTimeLimit time.Duration) {
+func (index *Index) garbageCollector(interval, timeLimit time.Duration, scanUnused bool) {
 	defer close(index.gcDone)
 
 	var gcDone chan struct{}
@@ -44,7 +45,7 @@ func (index *Index) garbageCollector(gcInterval, gcTimeLimit time.Duration) {
 		case <-t.C:
 			if !hasUpdate {
 				// Nothing new, keep waiting.
-				t.Reset(gcInterval)
+				t.Reset(interval)
 				continue
 			}
 
@@ -52,18 +53,18 @@ func (index *Index) garbageCollector(gcInterval, gcTimeLimit time.Duration) {
 			go func() {
 				defer close(gcDone)
 				gcCtx := ctx
-				if gcTimeLimit != 0 {
+				if timeLimit != 0 {
 					var cancel context.CancelFunc
-					gcCtx, cancel = context.WithTimeout(ctx, gcTimeLimit)
+					gcCtx, cancel = context.WithTimeout(ctx, timeLimit)
 					defer cancel()
 				}
 
 				log.Infow("GC started")
-				fileCount, err := index.gc(gcCtx)
+				fileCount, err := index.gc(gcCtx, scanUnused)
 				if err != nil {
 					switch err {
 					case context.DeadlineExceeded:
-						log.Infow("GC stopped at time limit", "limit", gcTimeLimit)
+						log.Infow("GC stopped at time limit", "limit", timeLimit)
 					case context.Canceled:
 						log.Info("GC canceled")
 					default:
@@ -80,17 +81,22 @@ func (index *Index) garbageCollector(gcInterval, gcTimeLimit time.Duration) {
 		case <-gcDone:
 			gcDone = nil
 			hasUpdate = false
-			t.Reset(gcInterval)
+			t.Reset(interval)
 		}
 	}
 }
 
 // gc searches for and removes stale index files. Returns the number of unused
 // index files that were removed.
-func (index *Index) gc(ctx context.Context) (int, error) {
-	count, err := index.freeUnusedFiles(ctx)
-	if err != nil {
-		return 0, err
+func (index *Index) gc(ctx context.Context, scanFree bool) (int, error) {
+	var count int
+	var err error
+
+	if scanFree {
+		count, err = index.freeFreeFiles(ctx)
+		if err != nil {
+			return 0, err
+		}
 	}
 
 	header, err := readHeader(index.headerPath)
@@ -129,18 +135,24 @@ func (index *Index) gc(ctx context.Context) (int, error) {
 	return count, nil
 }
 
-func (index *Index) freeUnusedFiles(ctx context.Context) (int, error) {
+func (index *Index) freeFreeFiles(ctx context.Context) (int, error) {
 	busySet := make(map[uint32]struct{})
 	maxFileSize := index.maxFileSize
 
-	index.bucketLk.RLock()
-	for _, offset := range index.buckets {
-		ok, fileNum := bucketPosToFileNum(offset, maxFileSize)
-		if ok {
-			busySet[fileNum] = struct{}{}
+	var i int
+	end := 1 << index.sizeBits
+	tmpBuckets := make([]types.Position, 4096)
+	for i < end {
+		index.bucketLk.RLock()
+		i += copy(tmpBuckets, index.buckets[i:])
+		index.bucketLk.RUnlock()
+		for _, offset := range tmpBuckets {
+			ok, fileNum := bucketPosToFileNum(offset, maxFileSize)
+			if ok {
+				busySet[fileNum] = struct{}{}
+			}
 		}
 	}
-	index.bucketLk.RUnlock()
 
 	if ctx.Err() != nil {
 		return 0, ctx.Err()
