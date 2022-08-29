@@ -59,7 +59,7 @@ func TestUpdate(t *testing.T) {
 
 		t.Logf("Overwrite same key with same value")
 		err = s.Put(blks[0].Cid().Bytes(), blks[1].RawData())
-		require.Error(t, err, types.ErrKeyExists.Error())
+		require.NoError(t, err) // immutable would return error
 		value, found, err = s.Get(blks[0].Cid().Bytes())
 		require.NoError(t, err)
 		require.True(t, found)

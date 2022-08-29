@@ -13,7 +13,7 @@ const (
 	defaultSyncInterval  = time.Second
 	defaultGCInterval    = 30 * time.Minute
 	defaultGCTimeLimit   = 5 * time.Minute
-	defaultGCScanFree    = true
+	defaultGCFastScan    = true
 )
 
 type config struct {
@@ -23,7 +23,7 @@ type config struct {
 	burstRate     types.Work
 	gcInterval    time.Duration
 	gcTimeLimit   time.Duration
-	gcScanFree    bool
+	gcFastScan    bool
 }
 
 type Option func(*config)
@@ -79,10 +79,10 @@ func GCTimeLimit(gcTimeLimit time.Duration) Option {
 	}
 }
 
-// GCFreeScan enables a fast scan of files to find any that are not reverenced
+// GCFastScan enables a fast scan of files to find any that are not referenced
 // by any index buckets.
-func GCScanFree(scanFree bool) Option {
+func GCFastScan(fastScan bool) Option {
 	return func(c *config) {
-		c.gcScanFree = scanFree
+		c.gcFastScan = fastScan
 	}
 }
