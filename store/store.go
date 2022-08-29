@@ -51,11 +51,11 @@ func OpenStore(ctx context.Context, path string, primary primary.PrimaryStorage,
 		burstRate:     defaultBurstRate,
 		gcInterval:    defaultGCInterval,
 		gcTimeLimit:   defaultGCTimeLimit,
-		gcScanFree:    defaultGCScanFree,
+		gcFastScan:    defaultGCFastScan,
 	}
 	c.apply(options)
 
-	index, err := index.Open(ctx, path, primary, c.indexSizeBits, c.indexFileSize, c.gcInterval, c.gcTimeLimit, c.gcScanFree)
+	index, err := index.Open(ctx, path, primary, c.indexSizeBits, c.indexFileSize, c.gcInterval, c.gcTimeLimit, c.gcFastScan)
 	if err != nil {
 		return nil, err
 	}
@@ -232,12 +232,9 @@ func (s *Store) Put(key []byte, value []byte) error {
 		}
 		if bytes.Equal(value, storedVal) {
 			// Trying to put the same value in an existing key, so ok to
-			// directly return.
-			//
-			// NOTE: How many times is this going to happen. Can this step be
-			// removed? This is still needed for the blockstore and that is
-			// ErrKeyExists is returned..
-			return types.ErrKeyExists
+			// directly return. This is not needed for the blockstore, since it
+			// sets s.immutable = true.
+			return nil
 		}
 	}
 

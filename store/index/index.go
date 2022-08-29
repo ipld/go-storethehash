@@ -151,7 +151,7 @@ type bucketPool map[BucketIndex][]byte
 //
 // Specifying 0 for indexSizeBits and maxFileSize results in using their
 // default values. A gcInterval of 0 disables garbage collection.
-func Open(ctx context.Context, path string, primary primary.PrimaryStorage, indexSizeBits uint8, maxFileSize uint32, gcInterval, gcTimeLimit time.Duration, gcScanUnused bool) (*Index, error) {
+func Open(ctx context.Context, path string, primary primary.PrimaryStorage, indexSizeBits uint8, maxFileSize uint32, gcInterval, gcTimeLimit time.Duration, gcFastScan bool) (*Index, error) {
 	var file *os.File
 	headerPath := filepath.Clean(path) + ".info"
 
@@ -243,7 +243,7 @@ func Open(ctx context.Context, path string, primary primary.PrimaryStorage, inde
 	} else {
 		idx.updateSig = make(chan struct{}, 1)
 		idx.gcDone = make(chan struct{})
-		go idx.garbageCollector(gcInterval, gcTimeLimit, gcScanUnused)
+		go idx.garbageCollector(gcInterval, gcTimeLimit, gcFastScan)
 	}
 
 	return idx, nil
@@ -401,16 +401,18 @@ func (idx *Index) Put(key []byte, location types.Block) error {
 	if err != nil {
 		return err
 	}
-	idx.bucketLk.Lock()
-	defer idx.bucketLk.Unlock()
-	records, err := idx.getRecordsFromBucket(bucket)
-	if err != nil {
-		return err
-	}
 
 	// The key does not need the prefix that was used to find the right
 	// bucket. For simplicity only full bytes are trimmed off.
 	indexKey := stripBucketPrefix(key, idx.sizeBits)
+
+	idx.bucketLk.Lock()
+	defer idx.bucketLk.Unlock()
+
+	records, err := idx.getRecordsFromBucket(bucket)
+	if err != nil {
+		return err
+	}
 
 	// No records stored in that bucket yet
 	var newData []byte
@@ -554,6 +556,11 @@ func (idx *Index) Update(key []byte, location types.Block) error {
 	if err != nil {
 		return err
 	}
+
+	// The key does not need the prefix that was used to find its bucket. For
+	// simplicity only full bytes are trimmed off.
+	indexKey := stripBucketPrefix(key, idx.sizeBits)
+
 	idx.bucketLk.Lock()
 	defer idx.bucketLk.Unlock()
 	records, err := idx.getRecordsFromBucket(bucket)
@@ -561,25 +568,20 @@ func (idx *Index) Update(key []byte, location types.Block) error {
 		return err
 	}
 
-	// The key does not need the prefix that was used to find its bucket. For
-	// simplicity only full bytes are trimmed off.
-	indexKey := stripBucketPrefix(key, idx.sizeBits)
-
 	var newData []byte
 	// If no records are stored in that bucket yet, it means there is no key to
 	// be updated.
 	if records == nil {
 		return fmt.Errorf("no records found in index, unable to update key")
-	} else {
-		// Read the record list to find the key and position.
-		r := records.GetRecord(indexKey)
-		if r == nil {
-			return fmt.Errorf("key to update not found in index")
-		}
-		// We want to overwrite the key so no need to do anything else.
-		// Update key in position.
-		newData = records.PutKeys([]KeyPositionPair{{r.Key, location}}, r.Pos, r.NextPos())
 	}
+
+	// Read the record list to find the key and position.
+	r := records.GetRecord(indexKey)
+	if r == nil {
+		return fmt.Errorf("key to update not found in index")
+	}
+	// Update key in position.
+	newData = records.PutKeys([]KeyPositionPair{{r.Key, location}}, r.Pos, r.NextPos())
 
 	idx.outstandingWork += types.Work(len(newData) + BucketPrefixSize + sizePrefixSize)
 	idx.nextPool[bucket] = newData
@@ -593,18 +595,19 @@ func (idx *Index) Remove(key []byte) (bool, error) {
 	if err != nil {
 		return false, err
 	}
-	idx.bucketLk.Lock()
-	defer idx.bucketLk.Unlock()
-	records, err := idx.getRecordsFromBucket(bucket)
-	if err != nil {
-		return false, err
-	}
 
 	// The key does not need the prefix that was used to find its bucket. For
 	// simplicity only full bytes are trimmed off.
 	indexKey := stripBucketPrefix(key, idx.sizeBits)
 
-	var newData []byte
+	idx.bucketLk.Lock()
+	defer idx.bucketLk.Unlock()
+
+	records, err := idx.getRecordsFromBucket(bucket)
+	if err != nil {
+		return false, err
+	}
+
 	// If no records are stored in that bucket yet, it means there is no key to
 	// be removed.
 	if records == nil {
@@ -620,7 +623,7 @@ func (idx *Index) Remove(key []byte) (bool, error) {
 	}
 
 	// Remove key from record.
-	newData = records.PutKeys([]KeyPositionPair{}, r.Pos, r.NextPos())
+	newData := records.PutKeys([]KeyPositionPair{}, r.Pos, r.NextPos())
 	// NOTE: We are removing the key without changing any keys. If we want
 	// to optimize for storage we need to check the keys with the same prefix
 	// and see if any of them can be shortened. This process will be similar
@@ -842,8 +845,7 @@ func (idx *Index) Flush() (types.Work, error) {
 	idx.bucketLk.Lock()
 	defer idx.bucketLk.Unlock()
 	for _, blk := range blks {
-		bucket := blk.bucket
-		if err = idx.buckets.Put(bucket, blk.blk.Offset); err != nil {
+		if err = idx.buckets.Put(blk.bucket, blk.blk.Offset); err != nil {
 			return 0, fmt.Errorf("error commiting bucket: %w", err)
 		}
 	}
