@@ -22,7 +22,7 @@ const maxFreeSkip = 8
 // garbageCollector is a goroutine that runs periodically to search for and
 // remove stale index files. It runs every gcInterval, if there have been any
 // index updates.
-func (index *Index) garbageCollector(interval, timeLimit time.Duration, scanFree bool) {
+func (index *Index) garbageCollector(interval, timeLimit time.Duration) {
 	defer close(index.gcDone)
 
 	var gcDone chan struct{}
@@ -66,7 +66,7 @@ func (index *Index) garbageCollector(interval, timeLimit time.Duration, scanFree
 				}
 
 				log.Infow("GC started")
-				rmCount, freeCount, err := index.gc(gcCtx, scanFree && freeSkip == 0)
+				rmCount, freeCount, err := index.gc(gcCtx, freeSkip == 0)
 				switch err {
 				case nil:
 					// GC finished, so do not run truncateFreeFiles next
@@ -84,9 +84,6 @@ func (index *Index) garbageCollector(interval, timeLimit time.Duration, scanFree
 					return
 				}
 
-				if !scanFree {
-					return
-				}
 				if freeSkip == 0 {
 					if freeCount == 0 {
 						if freeSkipIncr < maxFreeSkip {
@@ -112,7 +109,7 @@ func (index *Index) garbageCollector(interval, timeLimit time.Duration, scanFree
 }
 
 // gc searches for and removes stale index files. Returns the number of unused
-// index files that were removed.
+// index files that were removed and the number of freeFiles that were found.
 func (index *Index) gc(ctx context.Context, scanFree bool) (int, int, error) {
 	var freeCount int
 	var err error
