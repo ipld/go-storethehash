@@ -26,14 +26,15 @@ func TestGC(t *testing.T) {
 	require.NoError(t, err)
 	defer primary.Close()
 
-	idx, err := Open(context.Background(), indexPath, primary, 24, 1024, 0, 0, false)
+	idx, err := Open(context.Background(), indexPath, primary, 24, 1024, 0, 0)
 	require.NoError(t, err)
 	defer idx.Close()
 
 	// All index files in use, so gc should not remove any files.
-	count, err := idx.gc(context.Background(), true)
+	count, freeCount, err := idx.gc(context.Background(), true)
 	require.NoError(t, err)
-	require.Equal(t, 0, count)
+	require.Zero(t, count)
+	require.Zero(t, freeCount)
 
 	require.NoError(t, idx.Close())
 
@@ -48,19 +49,21 @@ func TestGC(t *testing.T) {
 	require.NoError(t, RemoveSavedBuckets(indexPath))
 
 	// Open the index with the duplicated files.
-	idx, err = Open(context.Background(), indexPath, primary, 24, 1024, 0, 0, false)
+	idx, err = Open(context.Background(), indexPath, primary, 24, 1024, 0, 0)
 	require.NoError(t, err)
 	defer idx.Close()
 
 	// GC should now remove the first 2 files only.
-	count, err = idx.gc(context.Background(), true)
+	count, freeCount, err = idx.gc(context.Background(), true)
 	require.NoError(t, err)
 	require.Equal(t, 2, count)
+	require.Equal(t, 2, freeCount)
 
 	// Another GC should not remove files.
-	count, err = idx.gc(context.Background(), true)
+	count, freeCount, err = idx.gc(context.Background(), true)
 	require.NoError(t, err)
-	require.Equal(t, 0, count)
+	require.Zero(t, count)
+	require.Zero(t, freeCount)
 
 	// Check that first file is .2 and last file is .24
 	header, err := readHeader(idx.headerPath)
@@ -85,7 +88,7 @@ func TestGC(t *testing.T) {
 	t.Log("File size before truncation:", sizeBefore)
 
 	// Run GC and check that second to last file was truncated by two records.
-	count, err = idx.gc(context.Background(), true)
+	count, _, err = idx.gc(context.Background(), false)
 	require.NoError(t, err)
 	require.Equal(t, count, 0)
 
@@ -124,9 +127,9 @@ func TestGC(t *testing.T) {
 	t.Log("Record size before:", size1Before)
 
 	// Run GC and check that first and second records were merged into one free record.
-	count, err = idx.gc(context.Background(), true)
+	count, _, err = idx.gc(context.Background(), false)
 	require.NoError(t, err)
-	require.Equal(t, count, 0)
+	require.Zero(t, count)
 
 	fi, err = os.Stat(fileName)
 	require.NoError(t, err)
