@@ -464,7 +464,7 @@ func applyFreeList(ctx context.Context, flPath, primaryPath string, undo bool) e
 
 		count++
 
-		// Log every 5 minutes, do time check every 2^20 records.
+		// Log at every percent increment.
 		percent := 100 * count / total
 		if percent >= nextPercent {
 			log.Printf("Processed %d of %d freelist records: %d%% done", count, total, percent)
