@@ -140,7 +140,9 @@ type Index struct {
 	basePath          string
 	updateSig         chan struct{}
 
-	gcDone chan struct{}
+	gcDone     chan struct{}
+	gcResumeAt uint32
+	gcResume   bool
 }
 
 type bucketPool map[BucketIndex][]byte

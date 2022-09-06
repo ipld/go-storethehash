@@ -131,18 +131,34 @@ func (index *Index) gc(ctx context.Context, scanFree bool) (int, int, error) {
 	lastFileNum := index.fileNum
 	index.flushLock.Unlock()
 
+	if header.FirstFile == lastFileNum {
+		return 0, 0, nil
+	}
+
+	var firstFileNum uint32
+	if index.gcResume {
+		firstFileNum = index.gcResumeAt
+		index.gcResume = false
+	} else {
+		firstFileNum = header.FirstFile
+	}
+
 	var count int
-	for fileNum := header.FirstFile; fileNum < lastFileNum; fileNum++ {
+	for fileNum := firstFileNum; fileNum < lastFileNum; {
 		indexPath := indexFileName(index.basePath, fileNum)
 
 		stale, err := index.gcIndexFile(ctx, fileNum, indexPath)
 		if err != nil {
+			if err == context.DeadlineExceeded {
+				fileNum++
+				if fileNum != lastFileNum {
+					index.gcResumeAt = fileNum
+					index.gcResume = true
+				}
+			}
 			return 0, 0, err
 		}
-		if !stale {
-			continue
-		}
-		if header.FirstFile == fileNum {
+		if stale && header.FirstFile == fileNum {
 			header.FirstFile++
 			err = writeHeader(index.headerPath, header)
 			if err != nil {
@@ -154,6 +170,19 @@ func (index *Index) gc(ctx context.Context, scanFree bool) (int, int, error) {
 				return 0, 0, err
 			}
 			count++
+		}
+
+		fileNum++
+		if fileNum == lastFileNum {
+			if count != 0 {
+				// Already seen header.FirstFile.
+				break
+			}
+			fileNum = header.FirstFile
+		}
+		if fileNum == firstFileNum {
+			// Back to where gc started, all done.
+			break
 		}
 	}
 	return count, freeCount, nil
