@@ -5,7 +5,6 @@ package filecache
 
 import (
 	"container/list"
-	"errors"
 	"os"
 	"sync"
 )
@@ -20,8 +19,6 @@ type FileCache struct {
 	openPerm  os.FileMode
 	removed   map[*os.File]int
 }
-
-var ErrAlreadyClosed = errors.New("already closed")
 
 type entry struct {
 	file *os.File
@@ -56,15 +53,7 @@ func (c *FileCache) Open(name string) (*os.File, error) {
 	defer c.lock.Unlock()
 
 	if c.capacity == 0 {
-		file, err := os.OpenFile(name, c.openFlag, c.openPerm)
-		if err != nil {
-			return nil, err
-		}
-		if c.removed == nil {
-			c.removed = make(map[*os.File]int)
-		}
-		c.removed[file] = 1
-		return file, nil
+		return os.OpenFile(name, c.openFlag, c.openPerm)
 	}
 
 	if c.cache == nil {
@@ -104,7 +93,7 @@ func (c *FileCache) Close(file *os.File) error {
 	if elem, ok := c.cache[name]; ok {
 		ent := elem.Value.(*entry)
 		if ent.refs == 0 {
-			return ErrAlreadyClosed
+			return &os.PathError{Op: "close", Path: name, Err: os.ErrClosed}
 		}
 		ent.refs--
 		return nil
@@ -112,7 +101,7 @@ func (c *FileCache) Close(file *os.File) error {
 	// File is no longer in cache, see if it was removed.
 	refs, ok := c.removed[file]
 	if !ok {
-		return ErrAlreadyClosed
+		return file.Close()
 	}
 
 	if refs == 1 {

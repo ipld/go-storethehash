@@ -59,7 +59,7 @@ func TestOpen(t *testing.T) {
 	require.NoError(t, fc.Close(fooFile))
 	require.NoError(t, fc.Close(fooFile))
 	err = fc.Close(fooFile)
-	require.ErrorIs(t, ErrAlreadyClosed, err)
+	require.ErrorContains(t, err, os.ErrClosed.Error())
 
 	err = fc.Remove(bazName)
 	require.NoError(t, err)
@@ -71,7 +71,7 @@ func TestOpen(t *testing.T) {
 	require.NoError(t, fc.Close(bazFile))
 
 	err = fc.Close(bazFile)
-	require.ErrorIs(t, ErrAlreadyClosed, err)
+	require.ErrorContains(t, err, os.ErrClosed.Error())
 }
 
 func TestMultiFileInstances(t *testing.T) {
@@ -163,7 +163,7 @@ func TestMultiFileInstances(t *testing.T) {
 
 	// Closing fooFileX again should result in error.
 	err = fc.Close(fooFileX)
-	require.ErrorIs(t, ErrAlreadyClosed, err)
+	require.ErrorContains(t, err, os.ErrClosed.Error())
 
 	// Make sure 3 closes are required to remove fooFile.
 	require.NoError(t, fc.Close(fooFile))
@@ -173,7 +173,7 @@ func TestMultiFileInstances(t *testing.T) {
 	require.NoError(t, fc.Close(fooFile))
 	require.Equal(t, 0, len(fc.removed))
 	err = fc.Close(fooFile)
-	require.ErrorIs(t, ErrAlreadyClosed, err)
+	require.ErrorContains(t, err, os.ErrClosed.Error())
 
 	// baz should still be in cache.
 	require.Equal(t, 1, fc.Len())
@@ -206,10 +206,10 @@ func TestZeroSize(t *testing.T) {
 	require.False(t, evicted)
 
 	require.Zero(t, fc.Len())
-	require.Equal(t, 2, len(fc.removed))
+	require.Zero(t, len(fc.removed))
 
 	require.NoError(t, fc.Close(file1))
-	require.Equal(t, 1, len(fc.removed))
+	require.Zero(t, len(fc.removed))
 
 	require.NoError(t, fc.Close(file2))
 	require.Zero(t, len(fc.removed))
