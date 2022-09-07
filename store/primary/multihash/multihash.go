@@ -171,7 +171,7 @@ func (mp *MultihashPrimary) GC(ctx context.Context) (int, error) {
 	if mp.gc == nil {
 		return 0, errors.New("gc disabled")
 	}
-	return mp.gc.gc(ctx)
+	return mp.gc.gc(ctx, 0)
 }
 
 func (cp *MultihashPrimary) FileSize() uint32 {

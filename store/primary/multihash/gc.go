@@ -21,44 +21,29 @@ var log = logging.Logger("storethehash/mhprimary")
 type primaryGC struct {
 	freeList    *freelist.FreeList
 	primary     *MultihashPrimary
-	updateSig   chan struct{}
 	done        chan struct{}
+	stop        chan struct{}
 	updateMutex sync.Mutex
 	updateIndex UpdateIndexFunc
 }
 
 type UpdateIndexFunc func([]byte, types.Block) error
 
-func newGC(primary *MultihashPrimary, freeList *freelist.FreeList, gcInterval, gcTimeLimit time.Duration) *primaryGC {
+func newGC(primary *MultihashPrimary, freeList *freelist.FreeList, interval, timeLimit time.Duration) *primaryGC {
 	gc := &primaryGC{
-		freeList:  freeList,
-		primary:   primary,
-		updateSig: make(chan struct{}, 1),
-		done:      make(chan struct{}),
+		freeList: freeList,
+		primary:  primary,
+		done:     make(chan struct{}),
+		stop:     make(chan struct{}),
 	}
 
-	go gc.run(gcInterval, gcTimeLimit)
-
-	if freeList != nil {
-		freeList.SetOnUpdate(gc.SignalUpdate)
-	}
+	go gc.run(interval, timeLimit)
 
 	return gc
 }
 
-func (gc *primaryGC) SignalUpdate() {
-	// Send signal to tell GC there are updates.
-	select {
-	case gc.updateSig <- struct{}{}:
-	default:
-	}
-}
-
 func (gc *primaryGC) close() {
-	if gc.freeList != nil {
-		gc.freeList.SetOnUpdate(nil)
-	}
-	close(gc.updateSig)
+	close(gc.stop)
 	<-gc.done
 }
 
@@ -69,55 +54,38 @@ func (gc *primaryGC) setUpdateIndex(updateIndex UpdateIndexFunc) {
 }
 
 // run is a goroutine that runs periodically to search for and
-// remove stale index files. It runs every gcInterval, if there have been any
+// remove stale index files. It runs every interval, if there have been any
 // primary updates.
-func (gc *primaryGC) run(gcInterval, gcTimeLimit time.Duration) {
+func (gc *primaryGC) run(interval, timeLimit time.Duration) {
 	defer close(gc.done)
 
 	var gcDone chan struct{}
-	hasUpdate := true
 
 	// Run 1st GC 7 minutes after startup.
-	t := time.NewTimer(7 * time.Minute)
+	t := time.NewTimer(interval + 2*timeLimit)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
 	for {
 		select {
-		case _, ok := <-gc.updateSig:
-			if !ok {
-				// Channel closed; shutting down.
-				cancel()
-				if gcDone != nil {
-					<-gcDone
-				}
-				return
+		case <-gc.stop:
+			cancel()
+			if gcDone != nil {
+				<-gcDone
 			}
-			hasUpdate = true
+			return
 		case <-t.C:
-			if !hasUpdate {
-				// Nothing new, nothing to evaporate, keep waiting.
-				t.Reset(gcInterval)
-				continue
-			}
-
 			gcDone = make(chan struct{})
 			go func() {
 				defer close(gcDone)
-				gcCtx := ctx
-				if gcTimeLimit != 0 {
-					var cancel context.CancelFunc
-					gcCtx, cancel = context.WithTimeout(ctx, gcTimeLimit)
-					defer cancel()
-				}
 
 				log.Infow("GC started")
-				count, err := gc.gc(gcCtx)
+				count, err := gc.gc(ctx, timeLimit)
 				if err != nil {
 					switch err {
 					case context.DeadlineExceeded:
-						log.Infow("GC stopped at time limit", "limit", gcTimeLimit)
+						log.Infow("GC stopped at time limit", "limit", timeLimit)
 					case context.Canceled:
 						log.Info("GC canceled")
 					default:
@@ -129,16 +97,20 @@ func (gc *primaryGC) run(gcInterval, gcTimeLimit time.Duration) {
 			}()
 		case <-gcDone:
 			gcDone = nil
-			hasUpdate = false
-			// Finished the checkpoint update, cleanup and reset timer.
-			t.Reset(gcInterval)
+			t.Reset(interval)
 		}
 	}
 }
 
-// gc searches for and removes stale index files. Returns the number of unused
-// index files that were removed.
-func (gc *primaryGC) gc(ctx context.Context) (int, error) {
+// gc searches for and removes stale primary files. Returns the number of unused
+// primary files that were removed.
+func (gc *primaryGC) gc(ctx context.Context, timeLimit time.Duration) (int, error) {
+	if timeLimit != 0 {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, timeLimit)
+		defer cancel()
+	}
+
 	affectedSet, err := processFreeList(ctx, gc.freeList, gc.primary.basePath, gc.primary.maxFileSize)
 	if err != nil {
 		return 0, fmt.Errorf("cannot process freelist: %w", err)
@@ -165,9 +137,6 @@ func (gc *primaryGC) gc(ctx context.Context) (int, error) {
 
 	var delCount int
 	for _, fileNum := range gcFiles {
-		if ctx.Err() != nil {
-			return 0, ctx.Err()
-		}
 		if fileNum == gc.primary.fileNum {
 			continue
 		}
@@ -175,6 +144,10 @@ func (gc *primaryGC) gc(ctx context.Context) (int, error) {
 
 		dead, err := gc.reapRecords(ctx, fileNum)
 		if err != nil {
+			if err == context.DeadlineExceeded {
+				log.Infow("GC stopped at time limit", "limit", timeLimit)
+				return delCount, nil
+			}
 			return 0, err
 		}
 

@@ -21,7 +21,6 @@ type FreeList struct {
 	blockPool       []types.Block
 	poolLk          sync.RWMutex
 	flushLock       sync.Mutex
-	onUpdate        func()
 }
 
 const (
@@ -42,13 +41,6 @@ func Open(path string) (*FreeList, error) {
 		writer:    bufio.NewWriterSize(file, blockBufferSize),
 		blockPool: make([]types.Block, 0, blockPoolSize),
 	}, nil
-}
-
-// SetOnUpdate sets a function to call when the freelist is updated.
-func (fl *FreeList) SetOnUpdate(f func()) {
-	fl.flushLock.Lock()
-	defer fl.flushLock.Unlock()
-	fl.onUpdate = f
 }
 
 func (cp *FreeList) Put(blk types.Block) error {
@@ -110,9 +102,6 @@ func (cp *FreeList) Flush() (types.Work, error) {
 	err := cp.writer.Flush()
 	if err != nil {
 		return 0, fmt.Errorf("cannot flush data to freelist file %s: %w", cp.file.Name(), err)
-	}
-	if cp.onUpdate != nil {
-		cp.onUpdate()
 	}
 
 	return work, nil
