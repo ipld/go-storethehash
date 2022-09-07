@@ -7,6 +7,7 @@ import (
 )
 
 const (
+	defaultFileCacheSize = 512
 	defaultIndexSizeBits = uint8(24)
 	defaultIndexFileSize = uint32(1024 * 1024 * 1024)
 	defaultBurstRate     = 4 * 1024 * 1024
@@ -16,6 +17,7 @@ const (
 )
 
 type config struct {
+	fileCacheSize int
 	indexSizeBits uint8
 	indexFileSize uint32
 	syncInterval  time.Duration
@@ -30,6 +32,13 @@ type Option func(*config)
 func (c *config) apply(opts []Option) {
 	for _, opt := range opts {
 		opt(c)
+	}
+}
+
+// FileCacheSize is the number of open files the index file cache may keep.
+func FileCacheSize(size int) Option {
+	return func(c *config) {
+		c.fileCacheSize = size
 	}
 }
 

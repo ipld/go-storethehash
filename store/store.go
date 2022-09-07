@@ -45,6 +45,7 @@ type Store struct {
 // default values. A gcInterval of 0 disables garbage collection.
 func OpenStore(ctx context.Context, path string, primary primary.PrimaryStorage, immutable bool, options ...Option) (*Store, error) {
 	c := config{
+		fileCacheSize: defaultFileCacheSize,
 		indexSizeBits: defaultIndexSizeBits,
 		indexFileSize: defaultIndexFileSize,
 		syncInterval:  defaultSyncInterval,
@@ -54,7 +55,7 @@ func OpenStore(ctx context.Context, path string, primary primary.PrimaryStorage,
 	}
 	c.apply(options)
 
-	index, err := index.Open(ctx, path, primary, c.indexSizeBits, c.indexFileSize, c.gcInterval, c.gcTimeLimit)
+	index, err := index.Open(ctx, path, primary, c.indexSizeBits, c.indexFileSize, c.gcInterval, c.gcTimeLimit, c.fileCacheSize)
 	if err != nil {
 		return nil, err
 	}

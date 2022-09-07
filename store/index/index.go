@@ -70,9 +70,6 @@ const (
 	// defaultMaxFileSize is the default size at which to start a new file.
 	defaultMaxFileSize = 1024 * 1024 * 1024
 
-	// Number of open files to keep in FileCache
-	fileCacheSize = 256
-
 	// sizePrefixSize is the number of bytes used for the size prefix of a
 	// record list.
 	sizePrefixSize = 4
@@ -158,7 +155,7 @@ type bucketPool map[BucketIndex][]byte
 //
 // Specifying 0 for indexSizeBits and maxFileSize results in using their
 // default values. A gcInterval of 0 disables garbage collection.
-func Open(ctx context.Context, path string, primary primary.PrimaryStorage, indexSizeBits uint8, maxFileSize uint32, gcInterval, gcTimeLimit time.Duration) (*Index, error) {
+func Open(ctx context.Context, path string, primary primary.PrimaryStorage, indexSizeBits uint8, maxFileSize uint32, gcInterval, gcTimeLimit time.Duration, fileCacheSize int) (*Index, error) {
 	var file *os.File
 	headerPath := filepath.Clean(path) + ".info"
 

@@ -18,7 +18,7 @@ type FileCache struct {
 	onEvicted func(*os.File, int)
 	openFlag  int
 	openPerm  os.FileMode
-	removed   map[string]*entry
+	removed   map[*os.File]int
 }
 
 var ErrAlreadyClosed = errors.New("already closed")
@@ -54,6 +54,18 @@ func NewOpenFile(capacity int, openFlag int, openPerm os.FileMode) *FileCache {
 func (c *FileCache) Open(name string) (*os.File, error) {
 	c.lock.Lock()
 	defer c.lock.Unlock()
+
+	if c.capacity == 0 {
+		file, err := os.OpenFile(name, c.openFlag, c.openPerm)
+		if err != nil {
+			return nil, err
+		}
+		if c.removed == nil {
+			c.removed = make(map[*os.File]int)
+		}
+		c.removed[file] = 1
+		return file, nil
+	}
 
 	if c.cache == nil {
 		c.cache = make(map[string]*list.Element)
@@ -98,13 +110,13 @@ func (c *FileCache) Close(file *os.File) error {
 		return nil
 	}
 	// File is no longer in cache, see if it was removed.
-	ent, ok := c.removed[name]
+	refs, ok := c.removed[file]
 	if !ok {
 		return ErrAlreadyClosed
 	}
 
-	if ent.refs == 1 {
-		delete(c.removed, name)
+	if refs == 1 {
+		delete(c.removed, file)
 		if len(c.removed) == 0 {
 			c.removed = nil
 		}
@@ -112,7 +124,7 @@ func (c *FileCache) Close(file *os.File) error {
 	}
 
 	// Removed from cache, but still in use.
-	ent.refs--
+	c.removed[file] = refs - 1
 	return nil
 }
 
@@ -127,14 +139,18 @@ func (c *FileCache) Len() int {
 	return c.ll.Len()
 }
 
+// Capacity return the capacity of the FileCache.
+func (c *FileCache) Cap() int {
+	c.lock.Lock()
+	defer c.lock.Unlock()
+
+	return c.capacity
+}
+
 // Clear closes and removes all files in the FileCache.
 func (c *FileCache) Clear() {
 	c.lock.Lock()
 	defer c.lock.Unlock()
-
-	if c.cache == nil {
-		return
-	}
 
 	for _, elem := range c.cache {
 		c.removeElement(elem)
@@ -147,13 +163,30 @@ func (c *FileCache) Remove(name string) error {
 	c.lock.Lock()
 	defer c.lock.Unlock()
 
-	if c.cache == nil {
-		return nil
-	}
 	if elem, ok := c.cache[name]; ok {
 		return c.removeElement(elem)
 	}
 	return nil
+}
+
+func (c *FileCache) SetCacheSize(capacity int) {
+	c.lock.Lock()
+	defer c.lock.Unlock()
+
+	if capacity < c.capacity {
+		if capacity == 0 {
+			for _, elem := range c.cache {
+				c.removeElement(elem)
+			}
+			c.ll = nil
+			c.cache = nil
+		} else {
+			for i := capacity; i < c.capacity; i++ {
+				c.removeOldest()
+			}
+		}
+	}
+	c.capacity = capacity
 }
 
 func (c *FileCache) SetOnEvicted(f func(*os.File, int)) {
@@ -183,8 +216,8 @@ func (c *FileCache) removeElement(elem *list.Element) error {
 	}
 	// Removed from cache, but still in use.
 	if c.removed == nil {
-		c.removed = make(map[string]*entry)
+		c.removed = make(map[*os.File]int)
 	}
-	c.removed[ent.file.Name()] = ent
+	c.removed[ent.file] = ent.refs
 	return nil
 }
