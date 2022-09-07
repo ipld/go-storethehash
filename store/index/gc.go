@@ -132,7 +132,7 @@ func (index *Index) gc(ctx context.Context, timeLimit time.Duration, scanFree bo
 	for fileNum := firstFileNum; fileNum < lastFileNum; {
 		indexPath := indexFileName(index.basePath, fileNum)
 
-		stale, err := index.gcIndexFile(ctx, fileNum, indexPath)
+		stale, err := index.reapIndexRecords(ctx, fileNum, indexPath)
 		if err != nil {
 			if err == context.DeadlineExceeded {
 				index.gcResumeAt = fileNum
@@ -237,10 +237,10 @@ func (index *Index) truncateFreeFiles(ctx context.Context) (int, error) {
 	return freeCount, nil
 }
 
-// gcIndexFile scans a single index file, checking if any of the entries are in
-// buckets that use this file. If no buckets are using this file for any of the
-// entries, then there are no more active entries and the file can be deleted.
-func (index *Index) gcIndexFile(ctx context.Context, fileNum uint32, indexPath string) (bool, error) {
+// reapIndexRecords scans a single index file, deleting records that are not
+// referenced by a bucket, and merging spans of deleted records, and truncating
+// deleted records from the end of the file.
+func (index *Index) reapIndexRecords(ctx context.Context, fileNum uint32, indexPath string) (bool, error) {
 	fi, err := os.Stat(indexPath)
 	if err != nil {
 		return false, fmt.Errorf("cannot stat index file: %w", err)
