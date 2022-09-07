@@ -138,11 +138,11 @@ type Index struct {
 	curPool, nextPool bucketPool
 	length            types.Position
 	basePath          string
-	updateSig         chan struct{}
 
 	gcDone     chan struct{}
 	gcResumeAt uint32
 	gcResume   bool
+	gcStop     chan struct{}
 }
 
 type bucketPool map[BucketIndex][]byte
@@ -243,8 +243,8 @@ func Open(ctx context.Context, path string, primary primary.PrimaryStorage, inde
 	if gcInterval == 0 {
 		log.Warn("Index garbage collection disabled")
 	} else {
-		idx.updateSig = make(chan struct{}, 1)
 		idx.gcDone = make(chan struct{})
+		idx.gcStop = make(chan struct{})
 		go idx.garbageCollector(gcInterval, gcTimeLimit)
 	}
 
@@ -852,14 +852,6 @@ func (idx *Index) Flush() (types.Work, error) {
 		}
 	}
 
-	if idx.updateSig != nil {
-		// Send signal to tell GC there are updates.
-		select {
-		case idx.updateSig <- struct{}{}:
-		default:
-		}
-	}
-
 	return work, nil
 }
 
@@ -872,10 +864,10 @@ func (idx *Index) Sync() error {
 // Close calls Flush to write work and data to the current index file, and then
 // closes the file.
 func (idx *Index) Close() error {
-	if idx.updateSig != nil {
-		close(idx.updateSig)
+	if idx.gcStop != nil {
+		close(idx.gcStop)
 		<-idx.gcDone
-		idx.updateSig = nil
+		idx.gcStop = nil
 	}
 	_, err := idx.Flush()
 	if err != nil {

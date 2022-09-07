@@ -26,8 +26,6 @@ func (index *Index) garbageCollector(interval, timeLimit time.Duration) {
 	defer close(index.gcDone)
 
 	var gcDone chan struct{}
-	hasUpdate := true
-
 	var freeSkip, freeSkipIncr int
 
 	// Run 1st GC 1 minute after startup.
@@ -38,23 +36,13 @@ func (index *Index) garbageCollector(interval, timeLimit time.Duration) {
 
 	for {
 		select {
-		case _, ok := <-index.updateSig:
-			if !ok {
-				// Channel closed; shutting down.
-				cancel()
-				if gcDone != nil {
-					<-gcDone
-				}
-				return
+		case <-index.gcStop:
+			cancel()
+			if gcDone != nil {
+				<-gcDone
 			}
-			hasUpdate = true
+			return
 		case <-t.C:
-			if !hasUpdate {
-				// Nothing new, keep waiting.
-				t.Reset(interval)
-				continue
-			}
-
 			gcDone = make(chan struct{})
 			go func() {
 				defer close(gcDone)
@@ -102,7 +90,6 @@ func (index *Index) garbageCollector(interval, timeLimit time.Duration) {
 			}()
 		case <-gcDone:
 			gcDone = nil
-			hasUpdate = false
 			t.Reset(interval)
 		}
 	}
@@ -139,6 +126,7 @@ func (index *Index) gc(ctx context.Context, scanFree bool) (int, int, error) {
 	if index.gcResume {
 		firstFileNum = index.gcResumeAt
 		index.gcResume = false
+		log.Info("Resuming GC at file %d", firstFileNum)
 	} else {
 		firstFileNum = header.FirstFile
 	}
