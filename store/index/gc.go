@@ -123,7 +123,7 @@ func (index *Index) gc(ctx context.Context, timeLimit time.Duration, scanFree bo
 	if index.gcResume {
 		firstFileNum = index.gcResumeAt
 		index.gcResume = false
-		log.Info("Resuming GC at file %d", firstFileNum)
+		log.Infow("Resuming GC", "file", filepath.Base(indexFileName(index.basePath, firstFileNum)))
 	} else {
 		firstFileNum = header.FirstFile
 	}
@@ -135,11 +135,8 @@ func (index *Index) gc(ctx context.Context, timeLimit time.Duration, scanFree bo
 		stale, err := index.gcIndexFile(ctx, fileNum, indexPath)
 		if err != nil {
 			if err == context.DeadlineExceeded {
-				fileNum++
-				if fileNum != lastFileNum {
-					index.gcResumeAt = fileNum
-					index.gcResume = true
-				}
+				index.gcResumeAt = fileNum
+				index.gcResume = true
 				log.Infow("GC stopped at time limit", "limit", timeLimit)
 				return count, freeCount, nil
 			}
