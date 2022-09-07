@@ -25,14 +25,13 @@ const maxFreeSkip = 8
 func (index *Index) garbageCollector(interval, timeLimit time.Duration) {
 	defer close(index.gcDone)
 
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
 	var gcDone chan struct{}
 	var freeSkip, freeSkipIncr int
 
-	// Run 1st GC 1 minute after startup.
-	t := time.NewTimer(time.Minute)
-
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	t := time.NewTimer(interval)
 
 	for {
 		select {
