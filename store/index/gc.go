@@ -49,10 +49,12 @@ func (index *Index) garbageCollector(interval, timeLimit time.Duration) {
 				rmCount, freeCount, err := index.gc(ctx, timeLimit, freeSkip == 0)
 				switch err {
 				case nil:
-					// GC finished, so do not run truncateFreeFiles next
-					// time since it will probably not be helpful if GC has
-					// time to finish.
-					freeCount = 0
+					if !index.gcResume {
+						// GC had time to reap records from all files, so
+						// running truncateFreeFiles will not be helpful over
+						// just reaping records on next GC run.
+						freeCount = 0
+					}
 					log.Infof("GC finished, removed %d index files", rmCount)
 				case context.Canceled:
 					log.Info("GC canceled")
