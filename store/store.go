@@ -395,16 +395,18 @@ func (s *Store) commit() (types.Work, error) {
 	if err != nil {
 		return 0, err
 	}
-	// finalize disk writes
-	if err = s.index.Primary.Sync(); err != nil {
-		return 0, err
-	}
-	if err = s.index.Sync(); err != nil {
-		return 0, err
-	}
-	if err = s.freelist.Sync(); err != nil {
-		return 0, err
-	}
+	// NOTE vmx 2022-09-07: Try out what the performance look like if no
+	// fsyncs are happening.
+	//// finalize disk writes
+	//if err = s.index.Primary.Sync(); err != nil {
+	//	return 0, err
+	//}
+	//if err = s.index.Sync(); err != nil {
+	//	return 0, err
+	//}
+	//if err = s.freelist.Sync(); err != nil {
+	//	return 0, err
+	//}
 	return primaryWork + indexWork + flWork, nil
 }
 
