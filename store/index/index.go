@@ -13,6 +13,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/ipld/go-storethehash/store/filecache"
 	"github.com/ipld/go-storethehash/store/primary"
 	"github.com/ipld/go-storethehash/store/types"
 )
@@ -68,6 +69,9 @@ const (
 
 	// defaultMaxFileSize is the default size at which to start a new file.
 	defaultMaxFileSize = 1024 * 1024 * 1024
+
+	// Number of open files to keep in FileCache
+	fileCacheSize = 256
 
 	// sizePrefixSize is the number of bytes used for the size prefix of a
 	// record list.
@@ -138,6 +142,7 @@ type Index struct {
 	curPool, nextPool bucketPool
 	length            types.Position
 	basePath          string
+	fileCache         *filecache.FileCache
 
 	gcDone     chan struct{}
 	gcResumeAt uint32
@@ -238,6 +243,7 @@ func Open(ctx context.Context, path string, primary primary.PrimaryStorage, inde
 		nextPool:    make(bucketPool, bucketPoolSize),
 		length:      types.Position(fi.Size()),
 		basePath:    path,
+		fileCache:   filecache.New(fileCacheSize),
 	}
 
 	if gcInterval == 0 {
@@ -752,11 +758,11 @@ func (idx *Index) readDiskBucket(indexOffset types.Position, fileNum uint32) (Re
 		return nil, nil
 	}
 
-	file, err := os.Open(indexFileName(idx.basePath, fileNum))
+	file, err := idx.fileCache.Open(indexFileName(idx.basePath, fileNum))
 	if err != nil {
 		return nil, err
 	}
-	defer file.Close()
+	defer idx.fileCache.Close(file)
 
 	// Read the record list from disk and get the file offset of that key in
 	// the primary storage.
@@ -864,6 +870,7 @@ func (idx *Index) Sync() error {
 // Close calls Flush to write work and data to the current index file, and then
 // closes the file.
 func (idx *Index) Close() error {
+	idx.fileCache.Clear()
 	if idx.gcStop != nil {
 		close(idx.gcStop)
 		<-idx.gcDone

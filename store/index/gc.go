@@ -143,18 +143,22 @@ func (index *Index) gc(ctx context.Context, timeLimit time.Duration, scanFree bo
 			}
 			return 0, 0, err
 		}
-		if stale && header.FirstFile == fileNum {
-			header.FirstFile++
-			err = writeHeader(index.headerPath, header)
-			if err != nil {
-				return 0, 0, err
+		if stale {
+			index.fileCache.Remove(indexPath)
+
+			// If this is first index file, then update header and remove file.
+			if header.FirstFile == fileNum {
+				header.FirstFile++
+				err = writeHeader(index.headerPath, header)
+				if err != nil {
+					return 0, 0, err
+				}
+				err = os.Remove(indexPath)
+				if err != nil {
+					return 0, 0, err
+				}
+				count++
 			}
-			// If updating index info ok, then remove stale index file.
-			err = os.Remove(indexPath)
-			if err != nil {
-				return 0, 0, err
-			}
-			count++
 		}
 
 		fileNum++
@@ -216,6 +220,8 @@ func (index *Index) truncateFreeFiles(ctx context.Context) (int, error) {
 		}
 
 		indexPath := indexFileName(basePath, fileNum)
+
+		index.fileCache.Remove(indexPath)
 
 		fi, err := os.Stat(indexPath)
 		if err != nil {
