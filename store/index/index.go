@@ -311,6 +311,10 @@ func (idx *Index) StorageSize() (int64, error) {
 	return size, nil
 }
 
+func (idx *Index) SetFileCacheSize(size int) {
+	idx.fileCache.SetCacheSize(size)
+}
+
 func scanIndexFile(ctx context.Context, basePath string, fileNum uint32, buckets Buckets, maxFileSize uint32) error {
 	indexPath := indexFileName(basePath, fileNum)
 

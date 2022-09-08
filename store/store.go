@@ -321,6 +321,10 @@ func (s *Store) Remove(key []byte) (bool, error) {
 	return removed, nil
 }
 
+func (s *Store) SetFileCacheSize(size int) {
+	s.index.SetFileCacheSize(size)
+}
+
 func (s *Store) getPrimaryKeyData(blk types.Block, indexKey []byte) ([]byte, []byte, error) {
 	// Get the key and value stored in primary to see if it is the same (index
 	// only stores prefixes).
