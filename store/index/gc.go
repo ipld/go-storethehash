@@ -45,6 +45,10 @@ func (index *Index) garbageCollector(interval, timeLimit time.Duration) {
 			gcDone = make(chan struct{})
 			go func() {
 				defer close(gcDone)
+				// Log cache stats.
+				hits, misses, cacheLen, cacheCap := index.fileCache.Stats()
+				log.Infow("File cache stats", "hits", hits, "misses", misses, "len", cacheLen, "cap", cacheCap)
+
 				log.Infow("GC started")
 				rmCount, freeCount, err := index.gc(ctx, timeLimit, freeSkip == 0)
 				switch err {

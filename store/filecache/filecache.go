@@ -18,6 +18,10 @@ type FileCache struct {
 	openFlag  int
 	openPerm  os.FileMode
 	removed   map[*os.File]int
+
+	// Stats
+	hit  int
+	miss int
 }
 
 type entry struct {
@@ -65,8 +69,10 @@ func (c *FileCache) Open(name string) (*os.File, error) {
 		c.ll.MoveToFront(elem)
 		ent := elem.Value.(*entry)
 		ent.refs++
+		c.hit++
 		return ent.file, nil
 	}
+	c.miss++
 
 	file, err := os.OpenFile(name, c.openFlag, c.openPerm)
 	if err != nil {
@@ -182,6 +188,22 @@ func (c *FileCache) SetOnEvicted(f func(*os.File, int)) {
 	defer c.lock.Unlock()
 
 	c.onEvicted = f
+}
+
+func (c *FileCache) Stats() (int, int, int, int) {
+	c.lock.Lock()
+	defer c.lock.Unlock()
+
+	var items int
+	if c.cache != nil {
+		items = c.ll.Len()
+	}
+	// If exceeded max, reset.
+	if c.hit < 0 || c.miss < 0 {
+		c.hit = 0
+		c.miss = 0
+	}
+	return c.hit, c.miss, items, c.capacity
 }
 
 func (c *FileCache) removeOldest() {

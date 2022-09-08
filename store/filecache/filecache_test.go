@@ -79,6 +79,9 @@ func TestOpen(t *testing.T) {
 
 	require.Zero(t, fc.Len())
 	require.Zero(t, len(fc.removed))
+
+	hits, misses, ln, cp := fc.Stats()
+	t.Logf("Cache stats: hits=%d misses=%d len=%d cap=%d", hits, misses, ln, cp)
 }
 
 func TestMultiFileInstances(t *testing.T) {
@@ -188,6 +191,11 @@ func TestMultiFileInstances(t *testing.T) {
 	fc.Clear()
 	require.Zero(t, fc.Len())
 	require.Zero(t, len(fc.removed))
+
+	hits, misses, ln, cp := fc.Stats()
+	require.Equal(t, 2, hits)
+	require.Equal(t, 4, misses)
+	t.Logf("Cache stats: hits=%d misses=%d len=%d cap=%d", hits, misses, ln, cp)
 }
 
 func TestZeroSize(t *testing.T) {
