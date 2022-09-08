@@ -29,13 +29,13 @@ func TestOpen(t *testing.T) {
 	barName := filepath.Join(tmp, "bar")
 	bazName := filepath.Join(tmp, "baz")
 
-	fooFile, err := fc.Open(fooName)
+	_, err := fc.Open(fooName)
 	require.NoError(t, err)
 
 	barFile, err := fc.Open(barName)
 	require.NoError(t, err)
 
-	fooFile, err = fc.Open(fooName)
+	fooFile, err := fc.Open(fooName)
 	require.NoError(t, err)
 
 	require.Zero(t, evictedCount)
@@ -51,6 +51,7 @@ func TestOpen(t *testing.T) {
 
 	barFile, err = fc.Open(barName)
 	require.NoError(t, err)
+	require.NoError(t, fc.Close(barFile))
 
 	require.Equal(t, 2, evictedCount)
 	require.Equal(t, fooName, evictedName)
@@ -61,8 +62,7 @@ func TestOpen(t *testing.T) {
 	err = fc.Close(fooFile)
 	require.ErrorContains(t, err, os.ErrClosed.Error())
 
-	err = fc.Remove(bazName)
-	require.NoError(t, err)
+	fc.Remove(bazName)
 
 	require.Equal(t, 3, evictedCount)
 	require.Equal(t, bazName, evictedName)
@@ -97,9 +97,9 @@ func TestMultiFileInstances(t *testing.T) {
 	// Incr reference count to 3.
 	fooFile, err := fc.Open(fooName)
 	require.NoError(t, err)
-	fooFile, err = fc.Open(fooName)
+	_, err = fc.Open(fooName)
 	require.NoError(t, err)
-	fooFile, err = fc.Open(fooName)
+	_, err = fc.Open(fooName)
 	require.NoError(t, err)
 
 	barFile, err := fc.Open(barName)
@@ -142,8 +142,8 @@ func TestMultiFileInstances(t *testing.T) {
 	// Remove the fooFileX from cache, without closing the file first. Since it
 	// still has a non-zero reference count, it is put into removed, along with
 	// the other instance of fooFile.
-	err = fc.Remove(fooName)
-	require.NoError(t, err)
+	fc.Remove(fooName)
+
 	// Check that there are two distinct files in removed, with different
 	// reference counts.
 	require.Equal(t, 2, len(fc.removed))
