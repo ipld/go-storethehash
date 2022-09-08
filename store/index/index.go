@@ -13,6 +13,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/ipld/go-storethehash/store/filecache"
 	"github.com/ipld/go-storethehash/store/primary"
 	"github.com/ipld/go-storethehash/store/types"
 )
@@ -138,6 +139,7 @@ type Index struct {
 	curPool, nextPool bucketPool
 	length            types.Position
 	basePath          string
+	fileCache         *filecache.FileCache
 
 	gcDone     chan struct{}
 	gcResumeAt uint32
@@ -153,7 +155,7 @@ type bucketPool map[BucketIndex][]byte
 //
 // Specifying 0 for indexSizeBits and maxFileSize results in using their
 // default values. A gcInterval of 0 disables garbage collection.
-func Open(ctx context.Context, path string, primary primary.PrimaryStorage, indexSizeBits uint8, maxFileSize uint32, gcInterval, gcTimeLimit time.Duration) (*Index, error) {
+func Open(ctx context.Context, path string, primary primary.PrimaryStorage, indexSizeBits uint8, maxFileSize uint32, gcInterval, gcTimeLimit time.Duration, fileCacheSize int) (*Index, error) {
 	var file *os.File
 	headerPath := filepath.Clean(path) + ".info"
 
@@ -238,6 +240,7 @@ func Open(ctx context.Context, path string, primary primary.PrimaryStorage, inde
 		nextPool:    make(bucketPool, bucketPoolSize),
 		length:      types.Position(fi.Size()),
 		basePath:    path,
+		fileCache:   filecache.New(fileCacheSize),
 	}
 
 	if gcInterval == 0 {
@@ -306,6 +309,10 @@ func (idx *Index) StorageSize() (int64, error) {
 		fileNum++
 	}
 	return size, nil
+}
+
+func (idx *Index) SetFileCacheSize(size int) {
+	idx.fileCache.SetCacheSize(size)
 }
 
 func scanIndexFile(ctx context.Context, basePath string, fileNum uint32, buckets Buckets, maxFileSize uint32) error {
@@ -752,11 +759,11 @@ func (idx *Index) readDiskBucket(indexOffset types.Position, fileNum uint32) (Re
 		return nil, nil
 	}
 
-	file, err := os.Open(indexFileName(idx.basePath, fileNum))
+	file, err := idx.fileCache.Open(indexFileName(idx.basePath, fileNum))
 	if err != nil {
 		return nil, err
 	}
-	defer file.Close()
+	defer idx.fileCache.Close(file)
 
 	// Read the record list from disk and get the file offset of that key in
 	// the primary storage.
@@ -864,6 +871,7 @@ func (idx *Index) Sync() error {
 // Close calls Flush to write work and data to the current index file, and then
 // closes the file.
 func (idx *Index) Close() error {
+	idx.fileCache.Clear()
 	if idx.gcStop != nil {
 		close(idx.gcStop)
 		<-idx.gcDone

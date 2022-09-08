@@ -26,7 +26,7 @@ func TestGC(t *testing.T) {
 	require.NoError(t, err)
 	defer primary.Close()
 
-	idx, err := Open(context.Background(), indexPath, primary, 24, 1024, 0, 0)
+	idx, err := Open(context.Background(), indexPath, primary, 24, 1024, 0, 0, testFCSize)
 	require.NoError(t, err)
 	defer idx.Close()
 
@@ -49,7 +49,7 @@ func TestGC(t *testing.T) {
 	require.NoError(t, RemoveSavedBuckets(indexPath))
 
 	// Open the index with the duplicated files.
-	idx, err = Open(context.Background(), indexPath, primary, 24, 1024, 0, 0)
+	idx, err = Open(context.Background(), indexPath, primary, 24, 1024, 0, 0, testFCSize)
 	require.NoError(t, err)
 	defer idx.Close()
 
