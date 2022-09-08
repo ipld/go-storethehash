@@ -80,6 +80,18 @@ func TestOpen(t *testing.T) {
 	require.Zero(t, fc.Len())
 	require.Zero(t, len(fc.removed))
 
+	// Check that double close returns error
+	fooFile, err = fc.Open(fooName)
+	require.NoError(t, err)
+	require.NoError(t, fc.Close(fooFile))
+	err = fc.Close(fooFile)
+	require.ErrorContains(t, err, os.ErrClosed.Error())
+
+	fc.Clear()
+
+	require.Zero(t, fc.Len())
+	require.Zero(t, len(fc.removed))
+
 	hits, misses, ln, cp := fc.Stats()
 	t.Logf("Cache stats: hits=%d misses=%d len=%d cap=%d", hits, misses, ln, cp)
 }
