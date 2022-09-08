@@ -9,6 +9,8 @@ import (
 	"sync"
 )
 
+// FileCache maintains a LRU cache of opened files. Its methods are safe to
+// call concurrently.
 type FileCache struct {
 	cache     map[string]*list.Element
 	capacity  int
@@ -145,7 +147,8 @@ func (c *FileCache) Cap() int {
 	return c.capacity
 }
 
-// Clear closes and removes all files in the FileCache.
+// Clear removes all files in the FileCache and closes those that have a zero
+// reference count.
 func (c *FileCache) Clear() {
 	c.lock.Lock()
 	defer c.lock.Unlock()
@@ -157,6 +160,8 @@ func (c *FileCache) Clear() {
 	c.cache = nil
 }
 
+// Remove removes the named file from the cache and closes it if it has a zero
+// reference count.
 func (c *FileCache) Remove(name string) {
 	c.lock.Lock()
 	defer c.lock.Unlock()
@@ -166,6 +171,10 @@ func (c *FileCache) Remove(name string) {
 	}
 }
 
+// SetCacheSize sets the capacity of the FileCache. If the change reduces the
+// capacity to fewer items than are currently in the cache, then the oldest
+// items are removed until the number of items in the cache is equal to the new
+// capacity.
 func (c *FileCache) SetCacheSize(capacity int) {
 	if capacity < 0 {
 		capacity = 0
@@ -190,6 +199,7 @@ func (c *FileCache) SetCacheSize(capacity int) {
 	c.capacity = capacity
 }
 
+// SetOnEvicted specifies a function to call when a file is removed from cache.
 func (c *FileCache) SetOnEvicted(f func(*os.File, int)) {
 	c.lock.Lock()
 	defer c.lock.Unlock()
@@ -197,6 +207,7 @@ func (c *FileCache) SetOnEvicted(f func(*os.File, int)) {
 	c.onEvicted = f
 }
 
+// Stats returns hit count, miss count, items in cache, and cache capacity.
 func (c *FileCache) Stats() (int, int, int, int) {
 	c.lock.Lock()
 	defer c.lock.Unlock()
