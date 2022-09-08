@@ -39,6 +39,9 @@ func New(capacity int) *FileCache {
 // NewOpenFile created a new FileCache that opens files using the specified
 // arguments to os.OpenFile.
 func NewOpenFile(capacity int, openFlag int, openPerm os.FileMode) *FileCache {
+	if capacity < 0 {
+		capacity = 0
+	}
 	return &FileCache{
 		capacity: capacity,
 		openFlag: openFlag,
@@ -164,6 +167,10 @@ func (c *FileCache) Remove(name string) {
 }
 
 func (c *FileCache) SetCacheSize(capacity int) {
+	if capacity < 0 {
+		capacity = 0
+	}
+
 	c.lock.Lock()
 	defer c.lock.Unlock()
 
