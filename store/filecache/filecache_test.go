@@ -72,6 +72,13 @@ func TestOpen(t *testing.T) {
 
 	err = fc.Close(bazFile)
 	require.ErrorContains(t, err, os.ErrClosed.Error())
+
+	// barFile closed, but still in cache, with zero references.
+	require.Equal(t, 1, fc.Len())
+	fc.Remove(barName)
+
+	require.Zero(t, fc.Len())
+	require.Zero(t, len(fc.removed))
 }
 
 func TestMultiFileInstances(t *testing.T) {
@@ -180,6 +187,7 @@ func TestMultiFileInstances(t *testing.T) {
 
 	fc.Clear()
 	require.Zero(t, fc.Len())
+	require.Zero(t, len(fc.removed))
 }
 
 func TestZeroSize(t *testing.T) {
@@ -213,4 +221,6 @@ func TestZeroSize(t *testing.T) {
 
 	require.NoError(t, fc.Close(file2))
 	require.Zero(t, len(fc.removed))
+
+	require.Zero(t, fc.Len())
 }
