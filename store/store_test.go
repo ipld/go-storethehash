@@ -11,8 +11,6 @@ import (
 	"github.com/ipfs/go-cid"
 	store "github.com/ipld/go-storethehash/store"
 	"github.com/ipld/go-storethehash/store/freelist"
-	cidprimary "github.com/ipld/go-storethehash/store/primary/cid"
-	mhprimary "github.com/ipld/go-storethehash/store/primary/multihash"
 	"github.com/ipld/go-storethehash/store/testutil"
 	"github.com/ipld/go-storethehash/store/types"
 	"github.com/multiformats/go-multihash"
@@ -22,17 +20,8 @@ import (
 func initStore(t *testing.T, dir string, immutable bool) (*store.Store, error) {
 	indexPath := filepath.Join(dir, "storethehash.index")
 	dataPath := filepath.Join(dir, "storethehash.data")
-	freeList, err := freelist.Open(indexPath + ".free")
+	store, err := store.OpenStore(context.Background(), store.CIDPrimary, dataPath, indexPath, immutable, store.GCInterval(0))
 	if err != nil {
-		return nil, err
-	}
-	primary, err := cidprimary.Open(dataPath)
-	if err != nil {
-		return nil, err
-	}
-	store, err := store.OpenStore(context.Background(), indexPath, primary, freeList, immutable, store.GCInterval(0))
-	if err != nil {
-		_ = primary.Close()
 		return nil, err
 	}
 	t.Cleanup(func() { require.NoError(t, store.Close()) })
@@ -235,11 +224,7 @@ func TestRecoverBadKey(t *testing.T) {
 	tmpDir := t.TempDir()
 	indexPath := filepath.Join(tmpDir, "storethehash.index")
 	dataPath := filepath.Join(tmpDir, "storethehash.data")
-	freeList, err := freelist.Open(indexPath + ".free")
-	require.NoError(t, err)
-	primary, err := mhprimary.Open(dataPath, freeList)
-	require.NoError(t, err)
-	s, err := store.OpenStore(context.Background(), indexPath, primary, freeList, false)
+	s, err := store.OpenStore(context.Background(), store.MultihashPrimary, dataPath, indexPath, false)
 	require.NoError(t, err)
 
 	t.Logf("Putting blocks")
@@ -253,11 +238,7 @@ func TestRecoverBadKey(t *testing.T) {
 	require.NoError(t, err)
 
 	// Open store again.
-	freeList, err = freelist.Open(indexPath + ".free")
-	require.NoError(t, err)
-	primary, err = mhprimary.Open(dataPath, freeList)
-	require.NoError(t, err)
-	s, err = store.OpenStore(context.Background(), indexPath, primary, freeList, false)
+	s, err = store.OpenStore(context.Background(), store.MultihashPrimary, dataPath, indexPath, false)
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, s.Close()) })
 

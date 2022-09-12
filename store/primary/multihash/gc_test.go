@@ -8,7 +8,6 @@ import (
 	"time"
 
 	"github.com/ipld/go-storethehash/store"
-	"github.com/ipld/go-storethehash/store/freelist"
 	mhprimary "github.com/ipld/go-storethehash/store/primary/multihash"
 	"github.com/ipld/go-storethehash/store/testutil"
 	"github.com/ipld/go-storethehash/store/types"
@@ -20,16 +19,10 @@ func TestGC(t *testing.T) {
 	tempDir := t.TempDir()
 	indexPath := filepath.Join(tempDir, "storethehash.index")
 	dataPath := filepath.Join(tempDir, "storethehash.data")
-	freeListPath := indexPath + ".free"
 
 	t.Logf("Creating store in directory %s\n", tempDir)
 
-	freeList, err := freelist.Open(freeListPath)
-	require.NoError(t, err)
-
-	primary, err := mhprimary.Open(dataPath, freeList, mhprimary.PrimaryFileSize(1024))
-	require.NoError(t, err)
-	store, err := store.OpenStore(ctx, indexPath, primary, freeList, false, store.GCInterval(time.Hour), store.IndexFileSize(10240), store.SyncInterval(time.Minute))
+	store, err := store.OpenStore(ctx, store.MultihashPrimary, dataPath, indexPath, false, store.GCInterval(time.Hour), store.PrimaryFileSize(1024), store.IndexFileSize(10240), store.SyncInterval(time.Minute))
 	require.NoError(t, err)
 	defer store.Close()
 
@@ -71,6 +64,9 @@ func TestGC(t *testing.T) {
 	t.Logf("Running primary GC")
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
+
+	primaryIface := store.Primary()
+	primary := primaryIface.(*mhprimary.MultihashPrimary)
 
 	fileCount, err := primary.GC(ctx)
 	require.NoError(t, err)

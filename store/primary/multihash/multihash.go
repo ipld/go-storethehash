@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"sync"
 
+	"github.com/ipld/go-storethehash/store/filecache"
 	"github.com/ipld/go-storethehash/store/freelist"
 	"github.com/ipld/go-storethehash/store/primary"
 	"github.com/ipld/go-storethehash/store/types"
@@ -51,6 +52,7 @@ type MultihashPrimary struct {
 	curPool, nextPool blockPool
 	poolLk            sync.RWMutex
 	flushLock         sync.Mutex
+	fileCache         *filecache.FileCache
 
 	// fileNum and length track flushed data.
 	fileNum uint32
@@ -84,7 +86,7 @@ func newBlockPool() blockPool {
 // Open opens the multihash primary storage file. The primary is created if
 // there is no existing primary at the specified path. If there is an older
 // version primary, then it is automatically upgraded.
-func Open(path string, freeList *freelist.FreeList, options ...Option) (*MultihashPrimary, error) {
+func Open(path string, freeList *freelist.FreeList, fileCache *filecache.FileCache, options ...Option) (*MultihashPrimary, error) {
 	cfg := config{
 		primaryFileSize: defaultPrimaryFileSize,
 		gcInterval:      defaultGCInterval,
@@ -139,6 +141,7 @@ func Open(path string, freeList *freelist.FreeList, options ...Option) (*Multiha
 	mp := &MultihashPrimary{
 		basePath:    path,
 		file:        file,
+		fileCache:   fileCache,
 		headerPath:  headerPath,
 		maxFileSize: cfg.primaryFileSize,
 		writer:      bufio.NewWriterSize(file, blockBufferSize),
@@ -208,7 +211,7 @@ func (cp *MultihashPrimary) Get(blk types.Block) ([]byte, []byte, error) {
 
 	localPos, fileNum := localizePrimaryPos(blk.Offset, cp.maxFileSize)
 
-	file, err := os.Open(primaryFileName(cp.basePath, fileNum))
+	file, err := cp.fileCache.Open(primaryFileName(cp.basePath, fileNum))
 	if err != nil {
 		return nil, nil, err
 	}
@@ -383,6 +386,7 @@ func (mp *MultihashPrimary) Sync() error {
 // Close calls Flush to write work and data to the primary file, and then
 // closes the file.
 func (mp *MultihashPrimary) Close() error {
+	mp.fileCache.Clear()
 	if mp.gc != nil {
 		mp.gc.close()
 	}

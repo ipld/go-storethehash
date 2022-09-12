@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/ipld/go-storethehash/store/filecache"
 	"github.com/ipld/go-storethehash/store/primary/inmemory"
 	"github.com/ipld/go-storethehash/store/types"
 	"github.com/stretchr/testify/require"
@@ -43,7 +44,7 @@ func assertCommonPrefixTrimmed(t *testing.T, key1 []byte, key2 []byte, expectedK
 	primaryStorage := inmemory.New([][2][]byte{{key1, {0x20}}, {key2, {0x30}}})
 	tempDir := t.TempDir()
 	indexPath := filepath.Join(tempDir, "storethehash.index")
-	i, err := Open(context.Background(), indexPath, primaryStorage, bucketBits, fileSize, 0, 0, testFCSize)
+	i, err := Open(context.Background(), indexPath, primaryStorage, bucketBits, fileSize, 0, 0, filecache.New(testFCSize))
 	require.NoError(t, err)
 	err = i.Put(key1, types.Block{Offset: 0, Size: 1})
 	require.NoError(t, err)
@@ -101,7 +102,7 @@ func TestIndexPutSingleKey(t *testing.T) {
 	primaryStorage := inmemory.New([][2][]byte{})
 	tempDir := t.TempDir()
 	indexPath := filepath.Join(tempDir, "storethehash.index")
-	i, err := Open(context.Background(), indexPath, primaryStorage, bucketBits, fileSize, 0, 0, testFCSize)
+	i, err := Open(context.Background(), indexPath, primaryStorage, bucketBits, fileSize, 0, 0, filecache.New(testFCSize))
 	require.NoError(t, err)
 	err = i.Put([]byte{1, 2, 3, 4, 5, 6, 7, 8, 9, 10}, types.Block{Offset: 222, Size: 10})
 	require.NoError(t, err)
@@ -140,7 +141,7 @@ func TestIndexRemoveKey(t *testing.T) {
 	primaryStorage := inmemory.New([][2][]byte{})
 	tempDir := t.TempDir()
 	indexPath := filepath.Join(tempDir, "storethehash.index")
-	i, err := Open(context.Background(), indexPath, primaryStorage, bucketBits, fileSize, 0, 0, testFCSize)
+	i, err := Open(context.Background(), indexPath, primaryStorage, bucketBits, fileSize, 0, 0, filecache.New(testFCSize))
 	require.NoError(t, err)
 	// Put key 1
 	err = i.Put(k1, b1)
@@ -208,7 +209,7 @@ func TestIndexPutDistinctKey(t *testing.T) {
 	primaryStorage := inmemory.New([][2][]byte{})
 	tempDir := t.TempDir()
 	indexPath := filepath.Join(tempDir, "storethehash.index")
-	i, err := Open(context.Background(), indexPath, primaryStorage, bucketBits, fileSize, 0, 0, testFCSize)
+	i, err := Open(context.Background(), indexPath, primaryStorage, bucketBits, fileSize, 0, 0, filecache.New(testFCSize))
 	require.NoError(t, err)
 	err = i.Put([]byte{1, 2, 3, 4, 5, 6, 7, 8, 9, 10}, types.Block{Offset: 222, Size: 10})
 	require.NoError(t, err)
@@ -251,7 +252,7 @@ func TestCorrectCacheReading(t *testing.T) {
 	primaryStorage := inmemory.New([][2][]byte{})
 	tempDir := t.TempDir()
 	indexPath := filepath.Join(tempDir, "storethehash.index")
-	i, err := Open(context.Background(), indexPath, primaryStorage, bucketBits, fileSize, 0, 0, testFCSize)
+	i, err := Open(context.Background(), indexPath, primaryStorage, bucketBits, fileSize, 0, 0, filecache.New(testFCSize))
 	require.NoError(t, err)
 	// put key in, then flush the cache
 	err = i.Put([]byte{1, 2, 3, 4, 5, 6, 7, 8, 9, 10}, types.Block{Offset: 222, Size: 10})
@@ -304,7 +305,7 @@ func TestIndexPutPrevAndNextKeyCommonPrefix(t *testing.T) {
 	})
 	tempDir := t.TempDir()
 	indexPath := filepath.Join(tempDir, "storethehash.index")
-	i, err := Open(context.Background(), indexPath, primaryStorage, bucketBits, fileSize, 0, 0, testFCSize)
+	i, err := Open(context.Background(), indexPath, primaryStorage, bucketBits, fileSize, 0, 0, filecache.New(testFCSize))
 	require.NoError(t, err)
 	err = i.Put(key1, types.Block{Offset: 0, Size: 1})
 	require.NoError(t, err)
@@ -350,7 +351,7 @@ func TestIndexGetEmptyIndex(t *testing.T) {
 	primaryStorage := inmemory.New([][2][]byte{})
 	tempDir := t.TempDir()
 	indexPath := filepath.Join(tempDir, "storethehash.index")
-	index, err := Open(context.Background(), indexPath, primaryStorage, bucketBits, fileSize, 0, 0, testFCSize)
+	index, err := Open(context.Background(), indexPath, primaryStorage, bucketBits, fileSize, 0, 0, filecache.New(testFCSize))
 	require.NoError(t, err)
 	_, found, err := index.Get(key)
 	require.NoError(t, err)
@@ -371,7 +372,7 @@ func TestIndexGet(t *testing.T) {
 	})
 	tempDir := t.TempDir()
 	indexPath := filepath.Join(tempDir, "storethehash.index")
-	i, err := Open(context.Background(), indexPath, primaryStorage, bucketBits, fileSize, 0, 0, testFCSize)
+	i, err := Open(context.Background(), indexPath, primaryStorage, bucketBits, fileSize, 0, 0, filecache.New(testFCSize))
 	require.NoError(t, err)
 	err = i.Put(key1, types.Block{Offset: 0, Size: 1})
 	require.NoError(t, err)
@@ -438,7 +439,7 @@ func TestIndexGet(t *testing.T) {
 
 	err = i.Close()
 	require.NoError(t, err)
-	i, err = Open(context.Background(), indexPath, primaryStorage, bucketBits, fileSize, 0, 0, testFCSize)
+	i, err = Open(context.Background(), indexPath, primaryStorage, bucketBits, fileSize, 0, 0, filecache.New(testFCSize))
 	require.NoError(t, err)
 
 	// same should hold true when index is closed and reopened
@@ -464,13 +465,13 @@ func TestIndexGet(t *testing.T) {
 	require.FileExists(t, bucketsFileName)
 
 	// Open index reading bucket state.
-	i, err = Open(context.Background(), indexPath, primaryStorage, bucketBits, fileSize, 0, 0, testFCSize)
+	i, err = Open(context.Background(), indexPath, primaryStorage, bucketBits, fileSize, 0, 0, filecache.New(testFCSize))
 	require.NoError(t, err)
 	t.Cleanup(func() { i.Close() })
 	require.NoFileExists(t, bucketsFileName)
 
 	// Open index scanning index files.
-	i2, err := Open(context.Background(), indexPath, primaryStorage, bucketBits, fileSize, 0, 0, testFCSize)
+	i2, err := Open(context.Background(), indexPath, primaryStorage, bucketBits, fileSize, 0, 0, filecache.New(testFCSize))
 	require.NoError(t, err)
 	t.Cleanup(func() { i2.Close() })
 
@@ -483,13 +484,13 @@ func TestIndexHeader(t *testing.T) {
 	indexPath := filepath.Join(tempDir, "storethehash.index")
 
 	primaryStorage := inmemory.New([][2][]byte{})
-	i1, err := Open(context.Background(), indexPath, primaryStorage, bucketBits, fileSize, 0, 0, testFCSize)
+	i1, err := Open(context.Background(), indexPath, primaryStorage, bucketBits, fileSize, 0, 0, filecache.New(testFCSize))
 	require.NoError(t, err)
 	t.Cleanup(func() { i1.Close() })
 	assertHeader(t, i1.headerPath, bucketBits)
 
 	// Check that the header doesn't change if the index is opened again.
-	i2, err := Open(context.Background(), indexPath, inmemory.New([][2][]byte{}), bucketBits, fileSize, 0, 0, testFCSize)
+	i2, err := Open(context.Background(), indexPath, inmemory.New([][2][]byte{}), bucketBits, fileSize, 0, 0, filecache.New(testFCSize))
 	require.NoError(t, err)
 	t.Cleanup(func() { i2.Close() })
 	assertHeader(t, i2.headerPath, bucketBits)
@@ -509,7 +510,7 @@ func TestIndexGetBad(t *testing.T) {
 
 	tempDir := t.TempDir()
 	indexPath := filepath.Join(tempDir, "storethehash.index")
-	i, err := Open(context.Background(), indexPath, primaryStorage, bucketBits, 0, 0, 0, testFCSize)
+	i, err := Open(context.Background(), indexPath, primaryStorage, bucketBits, 0, 0, 0, filecache.New(testFCSize))
 
 	require.NoError(t, err)
 	err = i.Put(key1, types.Block{Offset: 0, Size: 1})
@@ -566,7 +567,7 @@ func TestFlushRace(t *testing.T) {
 	})
 	tempDir := t.TempDir()
 	indexPath := filepath.Join(tempDir, "storethehash.index")
-	i, err := Open(context.Background(), indexPath, primaryStorage, bucketBits, fileSize, 0, 0, testFCSize)
+	i, err := Open(context.Background(), indexPath, primaryStorage, bucketBits, fileSize, 0, 0, filecache.New(testFCSize))
 	require.NoError(t, err)
 	err = i.Put(key1, types.Block{Offset: 0, Size: 1})
 	require.NoError(t, err)
@@ -605,7 +606,7 @@ func TestFlushExcess(t *testing.T) {
 	})
 	tempDir := t.TempDir()
 	indexPath := filepath.Join(tempDir, "storethehash.index")
-	i, err := Open(context.Background(), indexPath, primaryStorage, bucketBits, fileSize, 0, 0, testFCSize)
+	i, err := Open(context.Background(), indexPath, primaryStorage, bucketBits, fileSize, 0, 0, filecache.New(testFCSize))
 	require.NoError(t, err)
 	err = i.Put(key1, types.Block{Offset: 0, Size: 1})
 	require.NoError(t, err)

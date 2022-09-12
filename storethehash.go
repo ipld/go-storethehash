@@ -8,8 +8,6 @@ import (
 	bstore "github.com/ipfs/go-ipfs-blockstore"
 	ipld "github.com/ipfs/go-ipld-format"
 	store "github.com/ipld/go-storethehash/store"
-	"github.com/ipld/go-storethehash/store/freelist"
-	mhprimary "github.com/ipld/go-storethehash/store/primary/multihash"
 	"github.com/ipld/go-storethehash/store/types"
 )
 
@@ -30,15 +28,7 @@ type HashedBlockstore struct {
 
 // OpenHashedBlockstore opens a HashedBlockstore with the default index size
 func OpenHashedBlockstore(ctx context.Context, indexPath string, dataPath string, options ...store.Option) (*HashedBlockstore, error) {
-	freeList, err := freelist.Open(indexPath + ".free")
-	if err != nil {
-		return nil, err
-	}
-	primary, err := mhprimary.Open(dataPath, freeList)
-	if err != nil {
-		return nil, err
-	}
-	store, err := store.OpenStore(ctx, indexPath, primary, freeList, true, options...)
+	store, err := store.OpenStore(ctx, store.MultihashPrimary, dataPath, indexPath, true, options...)
 	if err != nil {
 		return nil, err
 	}

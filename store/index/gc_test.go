@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/ipld/go-storethehash/store/filecache"
 	"github.com/stretchr/testify/require"
 )
 
@@ -19,8 +20,10 @@ func TestGC(t *testing.T) {
 	err := copyFile(testIndexPath, indexPath)
 	require.NoError(t, err)
 
+	fc := filecache.New(1)
+
 	// Open index and with nil primary to avoid attempting to remap.
-	idx, err := Open(context.Background(), indexPath, nil, 24, 1024, 0, 0, testFCSize)
+	idx, err := Open(context.Background(), indexPath, nil, 24, 1024, 0, 0, fc)
 	require.NoError(t, err)
 	defer idx.Close()
 
@@ -43,7 +46,7 @@ func TestGC(t *testing.T) {
 	require.NoError(t, RemoveSavedBuckets(indexPath))
 
 	// Open the index with the duplicated files.
-	idx, err = Open(context.Background(), indexPath, nil, 24, 1024, 0, 0, testFCSize)
+	idx, err = Open(context.Background(), indexPath, nil, 24, 1024, 0, 0, fc)
 	require.NoError(t, err)
 	defer idx.Close()
 

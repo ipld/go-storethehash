@@ -55,9 +55,10 @@ func (gc *primaryGC) setUpdateIndex(updateIndex UpdateIndexFunc) {
 	gc.updateIndex = updateIndex
 }
 
-// run is a goroutine that runs periodically to search for and
-// remove stale index files. It runs every interval, if there have been any
-// primary updates.
+// run is a goroutine that runs periodically to search for and remove primary
+// files that contain only deleted records. It runs every interval and operates
+// on files that have not been visited before or that are affected by deleted
+// records from the freelist.
 func (gc *primaryGC) run(interval, timeLimit time.Duration) {
 	defer close(gc.done)
 

@@ -9,18 +9,28 @@ import (
 	"time"
 
 	logging "github.com/ipfs/go-log/v2"
+	"github.com/ipld/go-storethehash/store/filecache"
 	"github.com/ipld/go-storethehash/store/freelist"
 	"github.com/ipld/go-storethehash/store/index"
 	"github.com/ipld/go-storethehash/store/primary"
+	cidprimary "github.com/ipld/go-storethehash/store/primary/cid"
 	mhprimary "github.com/ipld/go-storethehash/store/primary/multihash"
 	"github.com/ipld/go-storethehash/store/types"
 )
 
 var log = logging.Logger("storethehash")
 
+const (
+	// Primary types
+	MultihashPrimary = "multihash"
+	CIDPrimary       = "CID"
+	InMemoryPrimary  = "InMemory"
+)
+
 type Store struct {
-	index    *index.Index
-	freelist *freelist.FreeList
+	index     *index.Index
+	fileCache *filecache.FileCache
+	freelist  *freelist.FreeList
 
 	stateLk sync.RWMutex
 	open    bool
@@ -39,24 +49,47 @@ type Store struct {
 	immutable    bool
 }
 
-// OpenStore opens the index and returns a Store with the given primary and
-// freelist.
+// OpenStore opens the index and returns a Store with the specified primary type.
 //
 // Calling Store.Close closes the primary and freelist.
-func OpenStore(ctx context.Context, path string, primary primary.PrimaryStorage, freeList *freelist.FreeList, immutable bool, options ...Option) (*Store, error) {
+func OpenStore(ctx context.Context, primaryType string, dataPath, indexPath string, immutable bool, options ...Option) (*Store, error) {
 	c := config{
-		fileCacheSize: defaultFileCacheSize,
-		indexSizeBits: defaultIndexSizeBits,
-		indexFileSize: defaultIndexFileSize,
-		syncInterval:  defaultSyncInterval,
-		burstRate:     defaultBurstRate,
-		gcInterval:    defaultGCInterval,
-		gcTimeLimit:   defaultGCTimeLimit,
+		fileCacheSize:   defaultFileCacheSize,
+		indexSizeBits:   defaultIndexSizeBits,
+		indexFileSize:   defaultIndexFileSize,
+		primaryFileSize: defaultPrimaryFileSize,
+		syncInterval:    defaultSyncInterval,
+		burstRate:       defaultBurstRate,
+		gcInterval:      defaultGCInterval,
+		gcTimeLimit:     defaultGCTimeLimit,
 	}
 	c.apply(options)
 
-	index, err := index.Open(ctx, path, primary, c.indexSizeBits, c.indexFileSize, c.gcInterval, c.gcTimeLimit, c.fileCacheSize)
+	freeList, err := freelist.Open(indexPath + ".free")
 	if err != nil {
+		return nil, err
+	}
+
+	fileCache := filecache.New(c.fileCacheSize)
+
+	var primary primary.PrimaryStorage
+	switch primaryType {
+	case MultihashPrimary:
+		primary, err = mhprimary.Open(dataPath, freeList, fileCache, mhprimary.GCInterval(c.gcInterval), mhprimary.GCTimeLimit(c.gcTimeLimit), mhprimary.PrimaryFileSize(c.primaryFileSize))
+	case CIDPrimary:
+		primary, err = cidprimary.Open(dataPath)
+	default:
+		err = fmt.Errorf("Unsupported primary type: %s", primaryType)
+	}
+	if err != nil {
+		freeList.Close()
+		return nil, err
+	}
+
+	index, err := index.Open(ctx, indexPath, primary, c.indexSizeBits, c.indexFileSize, c.gcInterval, c.gcTimeLimit, fileCache)
+	if err != nil {
+		primary.Close()
+		freeList.Close()
 		return nil, err
 	}
 
@@ -68,6 +101,7 @@ func OpenStore(ctx context.Context, path string, primary primary.PrimaryStorage,
 	store := &Store{
 		lastFlush:    time.Now(),
 		index:        index,
+		fileCache:    fileCache,
 		freelist:     freeList,
 		open:         true,
 		running:      false,
@@ -89,6 +123,10 @@ func (s *Store) Start() {
 	if !running {
 		go s.run()
 	}
+}
+
+func (s *Store) Primary() primary.PrimaryStorage {
+	return s.index.Primary
 }
 
 func (s *Store) run() {
@@ -149,6 +187,7 @@ func (s *Store) Close() error {
 	if err = s.index.Primary.Close(); err != nil {
 		cerr = err
 	}
+	s.fileCache.Clear()
 	if err = s.freelist.Close(); err != nil {
 		cerr = err
 	}
@@ -326,7 +365,7 @@ func (s *Store) Remove(key []byte) (bool, error) {
 }
 
 func (s *Store) SetFileCacheSize(size int) {
-	s.index.SetFileCacheSize(size)
+	s.fileCache.SetCacheSize(size)
 }
 
 func (s *Store) getPrimaryKeyData(blk types.Block, indexKey []byte) ([]byte, []byte, error) {

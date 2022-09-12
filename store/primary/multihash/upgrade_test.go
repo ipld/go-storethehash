@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/ipld/go-storethehash/store/filecache"
 	"github.com/ipld/go-storethehash/store/freelist"
 	"github.com/ipld/go-storethehash/store/types"
 	"github.com/stretchr/testify/require"
@@ -100,10 +101,11 @@ func TestUpgradePrimary(t *testing.T) {
 	require.Equal(t, header.MaxFileSize, uint32(testFileSizeLimit))
 	require.Equal(t, header.FirstFile, uint32(0))
 
-	_, err = Open(newPrimaryPath, nil)
+	fc := filecache.New(16)
+	_, err = Open(newPrimaryPath, nil, fc)
 	require.Equal(t, err, types.ErrPrimaryWrongFileSize{testFileSizeLimit, defaultMaxFileSize})
 
-	mp, err := Open(newPrimaryPath, nil, PrimaryFileSize(testFileSizeLimit))
+	mp, err := Open(newPrimaryPath, nil, fc, PrimaryFileSize(testFileSizeLimit))
 	require.NoError(t, err)
 	require.NoError(t, mp.Close())
 

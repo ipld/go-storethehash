@@ -7,23 +7,25 @@ import (
 )
 
 const (
-	defaultFileCacheSize = 512
-	defaultIndexSizeBits = uint8(24)
-	defaultIndexFileSize = uint32(1024 * 1024 * 1024)
-	defaultBurstRate     = 4 * 1024 * 1024
-	defaultSyncInterval  = time.Second
-	defaultGCInterval    = 30 * time.Minute
-	defaultGCTimeLimit   = 5 * time.Minute
+	defaultFileCacheSize   = 512
+	defaultIndexSizeBits   = uint8(24)
+	defaultIndexFileSize   = uint32(1024 * 1024 * 1024)
+	defaultPrimaryFileSize = uint32(1024 * 1024 * 1024)
+	defaultBurstRate       = 4 * 1024 * 1024
+	defaultSyncInterval    = time.Second
+	defaultGCInterval      = 30 * time.Minute
+	defaultGCTimeLimit     = 5 * time.Minute
 )
 
 type config struct {
-	fileCacheSize int
-	indexSizeBits uint8
-	indexFileSize uint32
-	syncInterval  time.Duration
-	burstRate     types.Work
-	gcInterval    time.Duration
-	gcTimeLimit   time.Duration
+	fileCacheSize   int
+	indexSizeBits   uint8
+	indexFileSize   uint32
+	primaryFileSize uint32
+	syncInterval    time.Duration
+	burstRate       types.Work
+	gcInterval      time.Duration
+	gcTimeLimit     time.Duration
 }
 
 type Option func(*config)
@@ -57,6 +59,14 @@ func IndexFileSize(indexFileSize uint32) Option {
 	}
 }
 
+// PrimaryFileSize is the maximum offset a primary record can have within an
+// individual primary file, before the record must be stored in another file.
+func PrimaryFileSize(fileSize uint32) Option {
+	return func(c *config) {
+		c.primaryFileSize = fileSize
+	}
+}
+
 // SyncInterval determines how frequently changes are flushed to disk.
 func SyncInterval(syncInterval time.Duration) Option {
 	return func(c *config) {
@@ -73,7 +83,7 @@ func BurstRate(burstRate uint64) Option {
 }
 
 // GCInterval is the amount of time to wait between GC cycles. A value of 0
-// disabled garbage collection.
+// disables garbage collection.
 func GCInterval(gcInterval time.Duration) Option {
 	return func(c *config) {
 		c.gcInterval = gcInterval

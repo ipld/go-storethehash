@@ -248,9 +248,9 @@ func (index *Index) truncateFreeFiles(ctx context.Context) (int, error) {
 	return freeCount, nil
 }
 
-// reapIndexRecords scans a single index file, deleting records that are not
-// referenced by a bucket, and merging spans of deleted records, and truncating
-// deleted records from the end of the file.
+// reapIndexRecords scans a single index file, logically deleting records that
+// are not referenced by a bucket, merging spans of deleted records, and
+// truncating deleted records from the end of the file.
 func (index *Index) reapIndexRecords(ctx context.Context, fileNum uint32, indexPath string) (bool, error) {
 	fi, err := os.Stat(indexPath)
 	if err != nil {
@@ -354,8 +354,9 @@ func (index *Index) reapIndexRecords(ctx context.Context, fileNum uint32, indexP
 				freeAtSize = size
 			}
 
-			// Mark the record as deleted by setting the highest bit in the size. This assumes that
-			// the size of an individual index record will always be less than 2^30.
+			// Mark the record as deleted by setting the highest bit in the
+			// size. This assumes that the size of an individual index record
+			// will always be less than 2^30.
 			binary.LittleEndian.PutUint32(sizeBuf, freeAtSize|deletedBit)
 			if _, err = file.WriteAt(sizeBuf, freeAt); err != nil {
 				return false, fmt.Errorf("cannot write to index file %s: %w", file.Name(), err)
