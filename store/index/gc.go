@@ -134,7 +134,7 @@ func (index *Index) gc(ctx context.Context, timeLimit time.Duration, scanFree bo
 	}
 
 	var count int
-	for fileNum := firstFileNum; fileNum < lastFileNum; {
+	for fileNum := firstFileNum; fileNum != lastFileNum; {
 		indexPath := indexFileName(index.basePath, fileNum)
 
 		stale, err := index.reapIndexRecords(ctx, fileNum, indexPath)
@@ -214,7 +214,7 @@ func (index *Index) truncateFreeFiles(ctx context.Context) (int, error) {
 	var freeCount int
 	basePath := index.basePath
 
-	for fileNum := header.FirstFile; fileNum < lastFileNum; fileNum++ {
+	for fileNum := header.FirstFile; fileNum != lastFileNum; fileNum++ {
 		if _, busy := busySet[fileNum]; busy {
 			continue
 		}
