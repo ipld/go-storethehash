@@ -25,6 +25,7 @@ type primaryGC struct {
 	stop        chan struct{}
 	updateMutex sync.Mutex
 	updateIndex UpdateIndexFunc
+	visited     map[uint32]struct{}
 }
 
 type UpdateIndexFunc func([]byte, types.Block) error
@@ -35,6 +36,7 @@ func newGC(primary *MultihashPrimary, freeList *freelist.FreeList, interval, tim
 		primary:  primary,
 		done:     make(chan struct{}),
 		stop:     make(chan struct{}),
+		visited:  make(map[uint32]struct{}),
 	}
 
 	go gc.run(interval, timeLimit)
@@ -60,8 +62,6 @@ func (gc *primaryGC) run(interval, timeLimit time.Duration) {
 	defer close(gc.done)
 
 	var gcDone chan struct{}
-
-	// Run 1st GC 7 minutes after startup.
 	t := time.NewTimer(interval + 2*timeLimit)
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -116,30 +116,23 @@ func (gc *primaryGC) gc(ctx context.Context, timeLimit time.Duration) (int, erro
 		return 0, fmt.Errorf("cannot process freelist: %w", err)
 	}
 
+	// Remove all files in the affected set from the visited set.
+	for fileNum := range affectedSet {
+		delete(gc.visited, fileNum)
+	}
+
 	header, err := readHeader(gc.primary.headerPath)
 	if err != nil {
 		return 0, fmt.Errorf("cannot read primary header: %w", err)
 	}
 
-	delete(affectedSet, gc.primary.fileNum)
-	gcFiles := make([]uint32, 0, len(affectedSet)+int(gc.primary.fileNum-header.FirstFile))
-	for fileNum := range affectedSet {
-		gcFiles = append(gcFiles, fileNum)
-	}
-
-	// GC all but the current primary file, starting with the affected list.
-	for fileNum := header.FirstFile; fileNum != gc.primary.fileNum; fileNum++ {
-		if _, ok := affectedSet[fileNum]; ok {
-			continue
-		}
-		gcFiles = append(gcFiles, fileNum)
-	}
-
+	// GC each unvisited file in order.
 	var delCount int
-	for _, fileNum := range gcFiles {
-		if fileNum == gc.primary.fileNum {
+	for fileNum := header.FirstFile; fileNum != gc.primary.fileNum; fileNum++ {
+		if _, ok := gc.visited[fileNum]; ok {
 			continue
 		}
+
 		filePath := primaryFileName(gc.primary.basePath, fileNum)
 
 		dead, err := gc.reapRecords(ctx, fileNum)
@@ -162,6 +155,8 @@ func (gc *primaryGC) gc(ctx context.Context, timeLimit time.Duration) (int, erro
 			log.Infow("Removed stale primary file", "file", filepath.Base(filePath))
 			delCount++
 		}
+
+		gc.visited[fileNum] = struct{}{}
 	}
 
 	return delCount, nil
@@ -327,7 +322,8 @@ func (gc *primaryGC) reapRecords(ctx context.Context, fileNum uint32) (bool, err
 
 			// Do not truncate file here, because moved record may not be
 			// written yet. Instead put moved record onto freelist and let next
-			// GC cycle process freelist and delete this record.
+			// GC cycle process freelist and delete this record. This also
+			// keeps low-use files getting processed each GC cycle.
 
 			// Add outdated data in primary storage to freelist
 			offset := absolutePrimaryPos(types.Position(busyAt), fileNum, gc.primary.maxFileSize)
