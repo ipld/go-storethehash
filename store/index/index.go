@@ -1106,11 +1106,11 @@ next:
 		data = newData
 	} else {
 		localPos, fileNum := localizeBucketPos(bucketPos, iter.index.maxFileSize)
-		file, err := os.Open(indexFileName(iter.index.basePath, fileNum))
+		file, err := iter.index.fileCache.Open(indexFileName(iter.index.basePath, fileNum))
 		if err != nil {
 			return Record{}, false, err
 		}
-		defer file.Close()
+		defer iter.index.fileCache.Close(file)
 
 		sizeBuf := make([]byte, sizePrefixSize)
 		if _, err = file.ReadAt(sizeBuf, int64(localPos-sizePrefixSize)); err != nil {
