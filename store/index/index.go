@@ -1080,6 +1080,7 @@ func (iter *Iterator) Next() (Record, bool, error) {
 	iter.index.flushLock.Lock()
 	defer iter.index.flushLock.Unlock()
 
+next:
 	iter.index.bucketLk.RLock()
 	var bucketPos types.Position
 	for {
@@ -1124,6 +1125,10 @@ func (iter *Iterator) Next() (Record, bool, error) {
 
 	rl := NewRecordList(data)
 	iter.rlIter = rl.Iter()
+	if iter.rlIter.Done() {
+		iter.rlIter = nil
+		goto next
+	}
 
 	return iter.rlIter.Next(), false, nil
 }
