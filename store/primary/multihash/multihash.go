@@ -224,6 +224,10 @@ func (cp *MultihashPrimary) Get(blk types.Block) ([]byte, []byte, error) {
 	if _, err = file.ReadAt(read, int64(localPos)); err != nil {
 		return nil, nil, fmt.Errorf("error reading data from multihash primary: %w", err)
 	}
+	if binary.LittleEndian.Uint32(read[:4])&deletedBit != 0 {
+		return nil, nil, nil
+	}
+
 	return readNode(read[4:])
 }
 
@@ -336,6 +340,9 @@ func (cp *MultihashPrimary) GetIndexKey(blk types.Block) ([]byte, error) {
 	key, _, err := cp.Get(blk)
 	if err != nil {
 		return nil, err
+	}
+	if key == nil {
+		return nil, nil
 	}
 	return cp.IndexKey(key)
 }

@@ -75,6 +75,20 @@ func TestUpdate(t *testing.T) {
 		// Check that is the last
 		_, err = iter.Next()
 		require.EqualError(t, err, io.EOF.Error())
+
+		storeIter := s.NewIterator()
+		var count int
+		for {
+			key, val, err := storeIter.Next()
+			if err == io.EOF {
+				break
+			}
+			require.Zero(t, count)
+			require.NoError(t, err)
+			require.Equal(t, blks[0].Cid().Bytes(), key)
+			require.Equal(t, blks[1].RawData(), val)
+			count++
+		}
 	})
 	t.Run("when immutable", func(t *testing.T) {
 		tempDir := t.TempDir()
@@ -118,6 +132,20 @@ func TestUpdate(t *testing.T) {
 		// Check freelist -- no updates
 		_, err = iter.Next()
 		require.EqualError(t, err, io.EOF.Error())
+
+		storeIter := s.NewIterator()
+		var count int
+		for {
+			key, val, err := storeIter.Next()
+			if err == io.EOF {
+				break
+			}
+			require.Zero(t, count)
+			require.NoError(t, err)
+			require.Equal(t, blks[0].Cid().Bytes(), key)
+			require.Equal(t, blks[0].RawData(), val)
+			count++
+		}
 	})
 	t.Run("when immutable with nearly identical CIDs", func(t *testing.T) {
 		tempDir := t.TempDir()
