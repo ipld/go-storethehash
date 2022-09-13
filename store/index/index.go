@@ -1346,7 +1346,7 @@ func remapIndex(ctx context.Context, mp *mhprimary.MultihashPrimary, buckets Buc
 
 		fileCount++
 
-		log.Infof("Remapped index file %s", filepath.Base(fileName))
+		log.Infof("Remapped index file: %s", filepath.Base(fileName))
 	}
 
 	// Update the header to indicate remapping is completed.

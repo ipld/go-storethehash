@@ -139,7 +139,7 @@ func chunkOldPrimary(ctx context.Context, name string, fileSizeLimit int64) (uin
 		return 0, err
 	}
 	log.Infow("Upgrade created primary file", "file", filepath.Base(outName))
-	writer := bufio.NewWriter(outFile)
+	writer := bufio.NewWriterSize(outFile, blockBufferSize)
 
 	sizeBuf := make([]byte, sizePrefixSize)
 	var written int64
@@ -201,7 +201,7 @@ func chunkOldPrimary(ctx context.Context, name string, fileSizeLimit int64) (uin
 				return 0, err
 			}
 			x10percent := 1000 * pos / total
-			log.Infof("Upgrade created primary file %s, %.1f%% done", filepath.Base(outName), float64(x10percent)/10)
+			log.Infof("Upgrade created primary file %q: %.1f%% done", filepath.Base(outName), float64(x10percent)/10)
 			writer.Reset(outFile)
 			written = 0
 		}
