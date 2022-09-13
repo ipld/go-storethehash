@@ -258,7 +258,7 @@ func applyFreeList(ctx context.Context, freeList *freelist.FreeList, filePath st
 		total := int(flSize / (types.OffBytesLen + types.SizeBytesLen))
 		flIter := freelist.NewIterator(bufio.NewReader(flFile))
 		sizeBuf := make([]byte, sizePrefixSize)
-		percentIncr := 10
+		percentIncr := 1
 		nextPercent := percentIncr
 
 		for {

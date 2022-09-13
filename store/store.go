@@ -24,7 +24,6 @@ const (
 	// Primary types
 	MultihashPrimary = "multihash"
 	CIDPrimary       = "CID"
-	InMemoryPrimary  = "InMemory"
 )
 
 type Store struct {
@@ -79,7 +78,7 @@ func OpenStore(ctx context.Context, primaryType string, dataPath, indexPath stri
 	case CIDPrimary:
 		primary, err = cidprimary.Open(dataPath)
 	default:
-		err = fmt.Errorf("Unsupported primary type: %s", primaryType)
+		err = fmt.Errorf("unsupported primary type: %s", primaryType)
 	}
 	if err != nil {
 		freeList.Close()
