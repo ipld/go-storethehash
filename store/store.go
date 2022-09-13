@@ -125,6 +125,10 @@ func (s *Store) Start() {
 	}
 }
 
+func (s *Store) Index() *index.Index {
+	return s.index
+}
+
 func (s *Store) Primary() primary.PrimaryStorage {
 	return s.index.Primary
 }

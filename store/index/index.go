@@ -1059,7 +1059,8 @@ type Iterator struct {
 	// bucket is the next bucket to iterate.
 	bucketIndex BucketIndex
 	// index is the Index being iterated.
-	index *Index
+	index  *Index
+	rlIter *RecordListIter
 }
 
 func (idx *Index) NewIterator() *Iterator {
@@ -1068,7 +1069,14 @@ func (idx *Index) NewIterator() *Iterator {
 	}
 }
 
-func (iter *Iterator) Next() ([]byte, types.Position, bool, error) {
+func (iter *Iterator) Next() (Record, bool, error) {
+	if iter.rlIter != nil {
+		if !iter.rlIter.Done() {
+			return iter.rlIter.Next(), false, nil
+		}
+		iter.rlIter = nil
+	}
+
 	iter.index.flushLock.Lock()
 	defer iter.index.flushLock.Unlock()
 
@@ -1077,7 +1085,7 @@ func (iter *Iterator) Next() ([]byte, types.Position, bool, error) {
 	for {
 		if int(iter.bucketIndex) >= len(iter.index.buckets) {
 			iter.index.bucketLk.RUnlock()
-			return nil, 0, true, nil
+			return Record{}, true, nil
 		}
 		bucketPos = iter.index.buckets[iter.bucketIndex]
 		if bucketPos != 0 {
@@ -1099,21 +1107,25 @@ func (iter *Iterator) Next() ([]byte, types.Position, bool, error) {
 		localPos, fileNum := localizeBucketPos(bucketPos, iter.index.maxFileSize)
 		file, err := os.Open(indexFileName(iter.index.basePath, fileNum))
 		if err != nil {
-			return nil, 0, false, err
+			return Record{}, false, err
 		}
 		defer file.Close()
 
 		sizeBuf := make([]byte, sizePrefixSize)
 		if _, err = file.ReadAt(sizeBuf, int64(localPos-sizePrefixSize)); err != nil {
-			return nil, 0, false, err
+			return Record{}, false, err
 		}
 		data = make([]byte, binary.LittleEndian.Uint32(sizeBuf))
 		if _, err = file.ReadAt(data, int64(localPos)); err != nil {
-			return nil, 0, false, err
+			return Record{}, false, err
 		}
 	}
 	iter.bucketIndex++
-	return data, bucketPos, false, nil
+
+	rl := NewRecordList(data)
+	iter.rlIter = rl.Iter()
+
+	return iter.rlIter.Next(), false, nil
 }
 
 func max(a, b int) int {
