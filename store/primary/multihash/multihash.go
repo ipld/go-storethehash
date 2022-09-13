@@ -215,7 +215,7 @@ func (cp *MultihashPrimary) Get(blk types.Block) ([]byte, []byte, error) {
 	if err != nil {
 		return nil, nil, err
 	}
-	defer file.Close()
+	defer cp.fileCache.Close(file)
 
 	read := make([]byte, int(blk.Size+4))
 	if _, err = file.ReadAt(read, int64(localPos)); err != nil {
