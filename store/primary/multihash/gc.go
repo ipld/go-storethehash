@@ -55,9 +55,10 @@ func (gc *primaryGC) close() {
 func (gc *primaryGC) run(interval, timeLimit time.Duration) {
 	defer close(gc.done)
 
-	var gcDone chan struct{}
-	t := time.NewTimer(interval + 2*timeLimit)
+	// Start after half the interval to offset from index GC.
+	t := time.NewTimer(interval / 2)
 
+	var gcDone chan struct{}
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
