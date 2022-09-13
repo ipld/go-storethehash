@@ -1259,14 +1259,16 @@ func remapIndex(ctx context.Context, mp *mhprimary.MultihashPrimary, buckets Buc
 	maxFileSize := header.MaxFileSize
 	fileBuckets := make(map[uint32][]int)
 
+	var indexTotal int
 	for i, offset := range buckets {
 		ok, fileNum := bucketPosToFileNum(offset, maxFileSize)
 		if ok {
 			fileBuckets[fileNum] = append(fileBuckets[fileNum], i)
+			indexTotal++
 		}
 	}
 
-	var fileCount, recordCount int
+	var fileCount, indexCount, recordCount int
 	var scratch []byte
 	sizeBuf := make([]byte, sizePrefixSize)
 
@@ -1324,6 +1326,7 @@ func remapIndex(ctx context.Context, mp *mhprimary.MultihashPrimary, buckets Buc
 			if _, err = file.WriteAt(data, int64(localPos)); err != nil {
 				return fmt.Errorf("failed to remap primary offset in index file %s: %w", fileName, err)
 			}
+			indexCount++
 		}
 
 		if err = file.Close(); err != nil {
@@ -1345,8 +1348,7 @@ func remapIndex(ctx context.Context, mp *mhprimary.MultihashPrimary, buckets Buc
 		}
 
 		fileCount++
-
-		log.Infof("Remapped index file: %s", filepath.Base(fileName))
+		log.Infof("Remapped index file %q: %.1f%% done", filepath.Base(fileName), float64(1000*indexCount/indexTotal)/10)
 	}
 
 	// Update the header to indicate remapping is completed.

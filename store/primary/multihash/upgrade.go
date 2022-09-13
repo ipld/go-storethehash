@@ -200,8 +200,7 @@ func chunkOldPrimary(ctx context.Context, name string, fileSizeLimit int64) (uin
 			if err != nil {
 				return 0, err
 			}
-			x10percent := 1000 * pos / total
-			log.Infof("Upgrade created primary file %q: %.1f%% done", filepath.Base(outName), float64(x10percent)/10)
+			log.Infof("Upgrade created primary file %q: %.1f%% done", filepath.Base(outName), float64(1000*pos/total)/10)
 			writer.Reset(outFile)
 			written = 0
 		}
