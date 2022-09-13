@@ -75,7 +75,7 @@ func OpenStore(ctx context.Context, primaryType string, dataPath, indexPath stri
 	var primary primary.PrimaryStorage
 	switch primaryType {
 	case MultihashPrimary:
-		primary, err = mhprimary.Open(dataPath, freeList, fileCache, mhprimary.GCInterval(c.gcInterval), mhprimary.GCTimeLimit(c.gcTimeLimit), mhprimary.PrimaryFileSize(c.primaryFileSize))
+		primary, err = mhprimary.Open(dataPath, freeList, fileCache, c.primaryFileSize)
 	case CIDPrimary:
 		primary, err = cidprimary.Open(dataPath)
 	default:
@@ -93,9 +93,11 @@ func OpenStore(ctx context.Context, primaryType string, dataPath, indexPath stri
 		return nil, err
 	}
 
+	// Start primary GC only after index is started so that primary GC does not
+	// interfere with any index remapping.
 	mp, ok := primary.(*mhprimary.MultihashPrimary)
 	if ok && mp != nil {
-		mp.EnableGCIndexUpdates(index.Update)
+		mp.StartGC(freeList, c.gcInterval, c.gcTimeLimit, index.Update)
 	}
 
 	store := &Store{

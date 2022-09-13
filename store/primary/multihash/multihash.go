@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
+	"time"
 
 	"github.com/ipld/go-storethehash/store/filecache"
 	"github.com/ipld/go-storethehash/store/freelist"
@@ -25,7 +26,7 @@ const (
 	PrimaryVersion = 1
 
 	// defaultMaxFileSize is largest the max file size is allowed to be.
-	defaultMaxFileSize = 1024 * 1024 * 1024
+	defaultMaxFileSize = uint32(1024 * 1024 * 1024)
 
 	// blockBufferSize is the size of primary I/O buffers. If has the same size
 	// as the linux pipe size.
@@ -63,8 +64,9 @@ type MultihashPrimary struct {
 	recFileNum uint32
 	recPos     types.Position
 
-	// primaryGC is the garbage collector for the primary.
-	gc *primaryGC
+	// gc is the garbage collector for the primary.
+	gc      *primaryGC
+	gcMutex sync.Mutex
 }
 
 type blockRecord struct {
@@ -86,30 +88,26 @@ func newBlockPool() blockPool {
 // Open opens the multihash primary storage file. The primary is created if
 // there is no existing primary at the specified path. If there is an older
 // version primary, then it is automatically upgraded.
-func Open(path string, freeList *freelist.FreeList, fileCache *filecache.FileCache, options ...Option) (*MultihashPrimary, error) {
-	cfg := config{
-		primaryFileSize: defaultPrimaryFileSize,
-		gcInterval:      defaultGCInterval,
-		gcTimeLimit:     defaultGCTimeLimit,
-	}
-	cfg.apply(options)
-
+func Open(path string, freeList *freelist.FreeList, fileCache *filecache.FileCache, maxFileSize uint32) (*MultihashPrimary, error) {
 	headerPath := filepath.Clean(path) + ".info"
-	if cfg.primaryFileSize > defaultMaxFileSize {
-		return nil, fmt.Errorf("maximum file size cannot exceed %d", defaultMaxFileSize)
+
+	if maxFileSize == 0 {
+		maxFileSize = defaultMaxFileSize
+	} else if maxFileSize > defaultMaxFileSize {
+		return nil, fmt.Errorf("maximum primary file size cannot exceed %d", defaultMaxFileSize)
 	}
 
 	var lastPrimaryNum uint32
 	header, err := readHeader(headerPath)
 	if os.IsNotExist(err) {
 		// If header does not exist, then upgrade primary.
-		lastPrimaryNum, err = upgradePrimary(context.Background(), path, headerPath, cfg.primaryFileSize, freeList)
+		lastPrimaryNum, err = upgradePrimary(context.Background(), path, headerPath, maxFileSize, freeList)
 		if err != nil {
 			return nil, err
 		}
 
 		// Header does not exist, so create new one.
-		header = newHeader(cfg.primaryFileSize)
+		header = newHeader(maxFileSize)
 		if err = writeHeader(headerPath, header); err != nil {
 			return nil, err
 		}
@@ -118,8 +116,8 @@ func Open(path string, freeList *freelist.FreeList, fileCache *filecache.FileCac
 			return nil, err
 		}
 
-		if header.MaxFileSize != cfg.primaryFileSize {
-			return nil, types.ErrPrimaryWrongFileSize{header.MaxFileSize, cfg.primaryFileSize}
+		if header.MaxFileSize != maxFileSize {
+			return nil, types.ErrPrimaryWrongFileSize{header.MaxFileSize, maxFileSize}
 		}
 
 		// Find last primary file.
@@ -143,7 +141,7 @@ func Open(path string, freeList *freelist.FreeList, fileCache *filecache.FileCac
 		file:        file,
 		fileCache:   fileCache,
 		headerPath:  headerPath,
-		maxFileSize: cfg.primaryFileSize,
+		maxFileSize: maxFileSize,
 		writer:      bufio.NewWriterSize(file, blockBufferSize),
 		curPool:     newBlockPool(),
 		nextPool:    newBlockPool(),
@@ -155,26 +153,31 @@ func Open(path string, freeList *freelist.FreeList, fileCache *filecache.FileCac
 		recPos:     types.Position(length),
 	}
 
-	if cfg.gcInterval == 0 || freeList == nil {
-		log.Warn("Primary garbage collection disabled")
-	} else {
-		mp.gc = newGC(mp, freeList, cfg.gcInterval, cfg.gcTimeLimit)
-	}
-
 	return mp, nil
 }
 
-func (mp *MultihashPrimary) EnableGCIndexUpdates(updateIndex UpdateIndexFunc) {
-	if mp.gc != nil {
-		mp.gc.setUpdateIndex(updateIndex)
+func (mp *MultihashPrimary) StartGC(freeList *freelist.FreeList, interval, timeLimit time.Duration, updateIndex UpdateIndexFunc) {
+	mp.gcMutex.Lock()
+	defer mp.gcMutex.Unlock()
+
+	// If GC already started or no free list, then do nothing.
+	if mp.gc != nil || freeList == nil {
+		return
 	}
+
+	mp.gc = newGC(mp, freeList, interval, timeLimit, updateIndex)
 }
 
 func (mp *MultihashPrimary) GC(ctx context.Context) (int, error) {
-	if mp.gc == nil {
+	mp.gcMutex.Lock()
+	gc := mp.gc
+	mp.gcMutex.Unlock()
+
+	if gc == nil {
 		return 0, errors.New("gc disabled")
 	}
-	return mp.gc.gc(ctx, 0)
+
+	return gc.gc(ctx, 0)
 }
 
 func (cp *MultihashPrimary) FileSize() uint32 {
@@ -387,9 +390,13 @@ func (mp *MultihashPrimary) Sync() error {
 // closes the file.
 func (mp *MultihashPrimary) Close() error {
 	mp.fileCache.Clear()
+
+	mp.gcMutex.Lock()
 	if mp.gc != nil {
 		mp.gc.close()
 	}
+	mp.gcMutex.Unlock()
+
 	_, err := mp.Flush()
 	if err != nil {
 		mp.file.Close()

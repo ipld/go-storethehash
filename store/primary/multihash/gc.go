@@ -8,7 +8,6 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"sync"
 	"time"
 
 	logging "github.com/ipfs/go-log/v2"
@@ -23,20 +22,20 @@ type primaryGC struct {
 	primary     *MultihashPrimary
 	done        chan struct{}
 	stop        chan struct{}
-	updateMutex sync.Mutex
 	updateIndex UpdateIndexFunc
 	visited     map[uint32]struct{}
 }
 
 type UpdateIndexFunc func([]byte, types.Block) error
 
-func newGC(primary *MultihashPrimary, freeList *freelist.FreeList, interval, timeLimit time.Duration) *primaryGC {
+func newGC(primary *MultihashPrimary, freeList *freelist.FreeList, interval, timeLimit time.Duration, updateIndex UpdateIndexFunc) *primaryGC {
 	gc := &primaryGC{
-		freeList: freeList,
-		primary:  primary,
-		done:     make(chan struct{}),
-		stop:     make(chan struct{}),
-		visited:  make(map[uint32]struct{}),
+		freeList:    freeList,
+		primary:     primary,
+		done:        make(chan struct{}),
+		stop:        make(chan struct{}),
+		updateIndex: updateIndex,
+		visited:     make(map[uint32]struct{}),
 	}
 
 	go gc.run(interval, timeLimit)
@@ -47,12 +46,6 @@ func newGC(primary *MultihashPrimary, freeList *freelist.FreeList, interval, tim
 func (gc *primaryGC) close() {
 	close(gc.stop)
 	<-gc.done
-}
-
-func (gc *primaryGC) setUpdateIndex(updateIndex UpdateIndexFunc) {
-	gc.updateMutex.Lock()
-	defer gc.updateMutex.Unlock()
-	gc.updateIndex = updateIndex
 }
 
 // run is a goroutine that runs periodically to search for and remove primary
@@ -249,10 +242,7 @@ func (gc *primaryGC) reapRecords(ctx context.Context, fileNum uint32) (bool, err
 	// remapping may not have completed yet.
 	//
 	// No ability to move primary records without being able to update index.
-	gc.updateMutex.Lock()
-	updateIndex := gc.updateIndex
-	gc.updateMutex.Unlock()
-	if updateIndex == nil {
+	if gc.updateIndex == nil {
 		return false, nil
 	}
 
@@ -316,7 +306,7 @@ func (gc *primaryGC) reapRecords(ctx context.Context, fileNum uint32) (bool, err
 				return false, fmt.Errorf("cannot put new primary record: %w", err)
 			}
 			// Update the index with the new primary location.
-			if err = updateIndex(indexKey, fileOffset); err != nil {
+			if err = gc.updateIndex(indexKey, fileOffset); err != nil {
 				return false, fmt.Errorf("cannot update index with new record location: %w", err)
 			}
 			log.Infow("Moved record from end of low-use file", "from", fileName)
