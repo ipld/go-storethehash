@@ -151,7 +151,7 @@ func (rl RecordList) GetRecord(key []byte) *Record {
 	return r
 }
 
-// ReadRecord reads  a record from a slice at the givem position.
+// ReadRecord reads a record from a slice at the given position.
 //
 // The given position must point to the first byte where the record starts.
 func (rl RecordList) ReadRecord(pos int) Record {

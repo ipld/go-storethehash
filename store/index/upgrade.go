@@ -46,7 +46,7 @@ func upgradeIndex(ctx context.Context, name, headerPath string, maxFileSize uint
 		return err
 	}
 
-	log.Infow("Replaced old index with multiple files", "replaced", name, "files", fileNum)
+	log.Infow("Replaced old index with multiple files", "replaced", name, "files", fileNum+1)
 	log.Infof("Upgraded index from version 2 to %d", IndexVersion)
 	return nil
 }
@@ -76,6 +76,7 @@ func chunkOldIndex(ctx context.Context, file *os.File, name string, fileSizeLimi
 	if err != nil {
 		return 0, err
 	}
+	log.Infof("Upgrade created index file %s", outName)
 	writer := bufio.NewWriterSize(outFile, indexBufferSize)
 	reader := bufio.NewReaderSize(file, indexBufferSize)
 
@@ -113,16 +114,13 @@ func chunkOldIndex(ctx context.Context, file *os.File, name string, fileSizeLimi
 			if ctx.Err() != nil {
 				return 0, ctx.Err()
 			}
-			log.Infof("Upgrade created index file %s", outName)
 			fileNum++
 			outName = indexFileName(name, fileNum)
 			outFile, err = createFileAppend(outName)
 			if err != nil {
-				if os.IsNotExist(err) {
-					break
-				}
 				return 0, err
 			}
+			log.Infof("Upgrade created index file %s", outName)
 			writer.Reset(outFile)
 			written = 0
 		}
@@ -131,8 +129,6 @@ func chunkOldIndex(ctx context.Context, file *os.File, name string, fileSizeLimi
 		if err = writer.Flush(); err != nil {
 			return 0, err
 		}
-		log.Infof("Upgrade created index file %s", outName)
-
 	}
 	outFile.Close()
 	return fileNum, nil

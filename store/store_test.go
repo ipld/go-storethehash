@@ -11,7 +11,6 @@ import (
 	"github.com/ipfs/go-cid"
 	store "github.com/ipld/go-storethehash/store"
 	"github.com/ipld/go-storethehash/store/freelist"
-	cidprimary "github.com/ipld/go-storethehash/store/primary/cid"
 	"github.com/ipld/go-storethehash/store/testutil"
 	"github.com/ipld/go-storethehash/store/types"
 	"github.com/multiformats/go-multihash"
@@ -21,13 +20,8 @@ import (
 func initStore(t *testing.T, dir string, immutable bool) (*store.Store, error) {
 	indexPath := filepath.Join(dir, "storethehash.index")
 	dataPath := filepath.Join(dir, "storethehash.data")
-	primary, err := cidprimary.Open(dataPath)
+	store, err := store.OpenStore(context.Background(), store.CIDPrimary, dataPath, indexPath, immutable, store.GCInterval(0))
 	if err != nil {
-		return nil, err
-	}
-	store, err := store.OpenStore(context.Background(), indexPath, primary, immutable)
-	if err != nil {
-		_ = primary.Close()
 		return nil, err
 	}
 	t.Cleanup(func() { require.NoError(t, store.Close()) })
@@ -73,7 +67,7 @@ func TestUpdate(t *testing.T) {
 		require.NoError(t, err)
 		t.Cleanup(func() { require.NoError(t, file.Close()) })
 
-		iter := freelist.NewFreeListIter(file)
+		iter := freelist.NewIterator(file)
 		// Check freelist for the only update. Should be the first position
 		blk, err := iter.Next()
 		require.Equal(t, blk.Offset, types.Position(0))
@@ -81,6 +75,20 @@ func TestUpdate(t *testing.T) {
 		// Check that is the last
 		_, err = iter.Next()
 		require.EqualError(t, err, io.EOF.Error())
+
+		storeIter := s.NewIterator()
+		var count int
+		for {
+			key, val, err := storeIter.Next()
+			if err == io.EOF {
+				break
+			}
+			require.Zero(t, count)
+			require.NoError(t, err)
+			require.Equal(t, blks[0].Cid().Bytes(), key)
+			require.Equal(t, blks[1].RawData(), val)
+			count++
+		}
 	})
 	t.Run("when immutable", func(t *testing.T) {
 		tempDir := t.TempDir()
@@ -120,10 +128,24 @@ func TestUpdate(t *testing.T) {
 		require.NoError(t, err)
 		t.Cleanup(func() { require.NoError(t, file.Close()) })
 
-		iter := freelist.NewFreeListIter(file)
+		iter := freelist.NewIterator(file)
 		// Check freelist -- no updates
 		_, err = iter.Next()
 		require.EqualError(t, err, io.EOF.Error())
+
+		storeIter := s.NewIterator()
+		var count int
+		for {
+			key, val, err := storeIter.Next()
+			if err == io.EOF {
+				break
+			}
+			require.Zero(t, count)
+			require.NoError(t, err)
+			require.Equal(t, blks[0].Cid().Bytes(), key)
+			require.Equal(t, blks[0].RawData(), val)
+			count++
+		}
 	})
 	t.Run("when immutable with nearly identical CIDs", func(t *testing.T) {
 		tempDir := t.TempDir()
@@ -170,7 +192,7 @@ func TestUpdate(t *testing.T) {
 		require.NoError(t, err)
 		t.Cleanup(func() { require.NoError(t, file.Close()) })
 
-		iter := freelist.NewFreeListIter(file)
+		iter := freelist.NewIterator(file)
 		// Check freelist -- no updates
 		_, err = iter.Next()
 		require.EqualError(t, err, io.EOF.Error())
@@ -216,7 +238,7 @@ func TestRemove(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, file.Close()) })
 
-	iter := freelist.NewFreeListIter(file)
+	iter := freelist.NewIterator(file)
 	// Check freelist for the only removal. Should be the first position
 	blk, err := iter.Next()
 	require.Equal(t, blk.Offset, types.Position(0))
@@ -230,34 +252,30 @@ func TestRecoverBadKey(t *testing.T) {
 	tmpDir := t.TempDir()
 	indexPath := filepath.Join(tmpDir, "storethehash.index")
 	dataPath := filepath.Join(tmpDir, "storethehash.data")
-	primary, err := cidprimary.Open(dataPath)
-	require.NoError(t, err)
-	s, err := store.OpenStore(context.Background(), indexPath, primary, false)
+	s, err := store.OpenStore(context.Background(), store.MultihashPrimary, dataPath, indexPath, false)
 	require.NoError(t, err)
 
 	t.Logf("Putting blocks")
 	blks := testutil.GenerateBlocksOfSize(1, 100)
-	err = s.Put(blks[0].Cid().Bytes(), blks[0].RawData())
+	err = s.Put(blks[0].Cid().Hash(), blks[0].RawData())
 	require.NoError(t, err)
 
 	// Close store and remove primary.
 	require.NoError(t, s.Close())
-	err = os.Remove(dataPath)
+	err = os.Remove(dataPath + ".0")
 	require.NoError(t, err)
 
 	// Open store again.
-	primary, err = cidprimary.Open(dataPath)
-	require.NoError(t, err)
-	s, err = store.OpenStore(context.Background(), indexPath, primary, false)
+	s, err = store.OpenStore(context.Background(), store.MultihashPrimary, dataPath, indexPath, false)
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, s.Close()) })
 
 	// Put data.
-	err = s.Put(blks[0].Cid().Bytes(), blks[0].RawData())
+	err = s.Put(blks[0].Cid().Hash(), blks[0].RawData())
 	require.NoError(t, err)
 
 	// Get data.
-	value, found, err := s.Get(blks[0].Cid().Bytes())
+	value, found, err := s.Get(blks[0].Cid().Hash())
 	require.NoError(t, err)
 	require.True(t, found)
 	require.Equal(t, value, blks[0].RawData())

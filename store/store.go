@@ -9,17 +9,27 @@ import (
 	"time"
 
 	logging "github.com/ipfs/go-log/v2"
+	"github.com/ipld/go-storethehash/store/filecache"
 	"github.com/ipld/go-storethehash/store/freelist"
 	"github.com/ipld/go-storethehash/store/index"
 	"github.com/ipld/go-storethehash/store/primary"
+	cidprimary "github.com/ipld/go-storethehash/store/primary/cid"
+	mhprimary "github.com/ipld/go-storethehash/store/primary/multihash"
 	"github.com/ipld/go-storethehash/store/types"
 )
 
 var log = logging.Logger("storethehash")
 
+const (
+	// Primary types
+	MultihashPrimary = "multihash"
+	CIDPrimary       = "CID"
+)
+
 type Store struct {
-	index    *index.Index
-	freelist *freelist.FreeList
+	index     *index.Index
+	fileCache *filecache.FileCache
+	freelist  *freelist.FreeList
 
 	stateLk sync.RWMutex
 	open    bool
@@ -38,35 +48,62 @@ type Store struct {
 	immutable    bool
 }
 
-// OpenStore opens the index and freelist and returns a Store with the given
-// primary.
+// OpenStore opens the index and returns a Store with the specified primary type.
 //
-// Specifying 0 for indexSizeBits and indexFileSize results in using their
-// default values. A gcInterval of 0 disables garbage collection.
-func OpenStore(ctx context.Context, path string, primary primary.PrimaryStorage, immutable bool, options ...Option) (*Store, error) {
+// Calling Store.Close closes the primary and freelist.
+func OpenStore(ctx context.Context, primaryType string, dataPath, indexPath string, immutable bool, options ...Option) (*Store, error) {
 	c := config{
-		fileCacheSize: defaultFileCacheSize,
-		indexSizeBits: defaultIndexSizeBits,
-		indexFileSize: defaultIndexFileSize,
-		syncInterval:  defaultSyncInterval,
-		burstRate:     defaultBurstRate,
-		gcInterval:    defaultGCInterval,
-		gcTimeLimit:   defaultGCTimeLimit,
+		fileCacheSize:   defaultFileCacheSize,
+		indexSizeBits:   defaultIndexSizeBits,
+		indexFileSize:   defaultIndexFileSize,
+		primaryFileSize: defaultPrimaryFileSize,
+		syncInterval:    defaultSyncInterval,
+		burstRate:       defaultBurstRate,
+		gcInterval:      defaultGCInterval,
+		gcTimeLimit:     defaultGCTimeLimit,
 	}
 	c.apply(options)
 
-	index, err := index.Open(ctx, path, primary, c.indexSizeBits, c.indexFileSize, c.gcInterval, c.gcTimeLimit, c.fileCacheSize)
+	freeList, err := freelist.Open(indexPath + ".free")
 	if err != nil {
 		return nil, err
 	}
-	freelist, err := freelist.OpenFreeList(path + ".free")
+
+	fileCache := filecache.New(c.fileCacheSize)
+
+	var primary primary.PrimaryStorage
+	switch primaryType {
+	case MultihashPrimary:
+		primary, err = mhprimary.Open(dataPath, freeList, fileCache, c.primaryFileSize)
+	case CIDPrimary:
+		primary, err = cidprimary.Open(dataPath)
+	default:
+		err = fmt.Errorf("unsupported primary type: %s", primaryType)
+	}
 	if err != nil {
+		freeList.Close()
 		return nil, err
 	}
+
+	index, err := index.Open(ctx, indexPath, primary, c.indexSizeBits, c.indexFileSize, c.gcInterval, c.gcTimeLimit, fileCache)
+	if err != nil {
+		primary.Close()
+		freeList.Close()
+		return nil, err
+	}
+
+	// Start primary GC only after index is started so that primary GC does not
+	// interfere with any index remapping.
+	mp, ok := primary.(*mhprimary.MultihashPrimary)
+	if ok && mp != nil {
+		mp.StartGC(freeList, c.gcInterval, c.gcTimeLimit, index.Update)
+	}
+
 	store := &Store{
 		lastFlush:    time.Now(),
 		index:        index,
-		freelist:     freelist,
+		fileCache:    fileCache,
+		freelist:     freeList,
 		open:         true,
 		running:      false,
 		syncInterval: c.syncInterval,
@@ -89,6 +126,14 @@ func (s *Store) Start() {
 	}
 }
 
+func (s *Store) Index() *index.Index {
+	return s.index
+}
+
+func (s *Store) Primary() primary.PrimaryStorage {
+	return s.index.Primary
+}
+
 func (s *Store) run() {
 	defer close(s.closed)
 	d := time.NewTicker(s.syncInterval)
@@ -96,7 +141,9 @@ func (s *Store) run() {
 	for {
 		select {
 		case <-s.flushNow:
-			s.Flush()
+			if err := s.Flush(); err != nil {
+				s.setErr(err)
+			}
 		case <-s.closing:
 			d.Stop()
 			select {
@@ -145,6 +192,7 @@ func (s *Store) Close() error {
 	if err = s.index.Primary.Close(); err != nil {
 		cerr = err
 	}
+	s.fileCache.Clear()
 	if err = s.freelist.Close(); err != nil {
 		cerr = err
 	}
@@ -219,9 +267,9 @@ func (s *Store) Put(key []byte, value []byte) error {
 		if err != nil {
 			return err
 		}
-		// We need to compare to the resulting indexKey for the storedKey.
-		// Two keys may point to same IndexKey (i.e. two CIDS same multihash),
-		// and they need to be treated as the same key.
+		// We need to compare to the resulting indexKey to the storedKey. Two
+		// keys may point to same IndexKey (i.e. two CIDS same multihash), and
+		// they need to be treated as the same key.
 		if storedKey != nil {
 			// if we're not accepting updates, this is the point we bail --
 			// the identical key is in primary storage, we don't do update operations
@@ -322,7 +370,7 @@ func (s *Store) Remove(key []byte) (bool, error) {
 }
 
 func (s *Store) SetFileCacheSize(size int) {
-	s.index.SetFileCacheSize(size)
+	s.fileCache.SetCacheSize(size)
 }
 
 func (s *Store) getPrimaryKeyData(blk types.Block, indexKey []byte) ([]byte, []byte, error) {
@@ -419,7 +467,7 @@ func (s *Store) outstandingWork() bool {
 
 // Flush writes outstanding work and buffered data to the primary, index, and
 // freelist files. It then syncs these files to permanent storage.
-func (s *Store) Flush() {
+func (s *Store) Flush() error {
 	lastFlush := time.Now()
 
 	s.rateLk.Lock()
@@ -427,13 +475,12 @@ func (s *Store) Flush() {
 	s.rateLk.Unlock()
 
 	if !s.outstandingWork() {
-		return
+		return nil
 	}
 
 	work, err := s.commit()
 	if err != nil {
-		s.setErr(err)
-		return
+		return err
 	}
 
 	now := time.Now()
@@ -445,6 +492,8 @@ func (s *Store) Flush() {
 		s.rate = rate
 		s.rateLk.Unlock()
 	}
+
+	return nil
 }
 
 func (s *Store) Has(key []byte) (bool, error) {

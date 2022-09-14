@@ -5,7 +5,6 @@ import (
 	"bytes"
 	"context"
 	"encoding/binary"
-	"encoding/json"
 	"fmt"
 	"io"
 	"os"
@@ -15,6 +14,7 @@ import (
 
 	"github.com/ipld/go-storethehash/store/filecache"
 	"github.com/ipld/go-storethehash/store/primary"
+	mhprimary "github.com/ipld/go-storethehash/store/primary/multihash"
 	"github.com/ipld/go-storethehash/store/types"
 )
 
@@ -81,10 +81,9 @@ const (
 	// bucketPoolSize is the bucket cache size.
 	bucketPoolSize = 1024
 
-	// deletedBit is the highest order bit in the uint32 size part of an index
-	// file record, and when set, indicates that the index record is deleted.
-	// Since index files cannot exceed a size of 2^30, this bit is otherwise
-	// unused.
+	// deletedBit is the highest order bit in the uint32 size part of a file
+	// record, and when set, indicates that the record is deleted. This means
+	// that record sizes must be less than 2^31.
 	deletedBit = uint32(1 << 31)
 )
 
@@ -100,28 +99,6 @@ func stripBucketPrefix(key []byte, bits byte) []byte {
 		return nil
 	}
 	return key[prefixLen:]
-}
-
-// Header contains information about the index. This is actually stored in a
-// separate ".info" file, but is the first file read when the index is opened.
-type Header struct {
-	// A version number in case we change the header
-	Version int
-	// The number of bits used to determine the in-memory buckets
-	BucketsBits byte
-	// MaxFileSize is the size limit of each index file. This cannot be greater
-	// than 4GiB.
-	MaxFileSize uint32
-	// First index file number
-	FirstFile uint32
-}
-
-func newHeader(bucketsBits byte, maxFileSize uint32) Header {
-	return Header{
-		Version:     IndexVersion,
-		BucketsBits: bucketsBits,
-		MaxFileSize: maxFileSize,
-	}
 }
 
 type Index struct {
@@ -155,7 +132,7 @@ type bucketPool map[BucketIndex][]byte
 //
 // Specifying 0 for indexSizeBits and maxFileSize results in using their
 // default values. A gcInterval of 0 disables garbage collection.
-func Open(ctx context.Context, path string, primary primary.PrimaryStorage, indexSizeBits uint8, maxFileSize uint32, gcInterval, gcTimeLimit time.Duration, fileCacheSize int) (*Index, error) {
+func Open(ctx context.Context, path string, primary primary.PrimaryStorage, indexSizeBits uint8, maxFileSize uint32, gcInterval, gcTimeLimit time.Duration, fileCache *filecache.FileCache) (*Index, error) {
 	var file *os.File
 	headerPath := filepath.Clean(path) + ".info"
 
@@ -211,6 +188,21 @@ func Open(ctx context.Context, path string, primary primary.PrimaryStorage, inde
 				return nil, fmt.Errorf("could not find most recent index file: %w", err)
 			}
 		}
+
+		mp, ok := primary.(*mhprimary.MultihashPrimary)
+		if ok {
+			switch header.PrimaryFileSize {
+			case 0:
+				// Primary file size is not yet known, so may need to remap index.
+				err = remapIndex(ctx, mp, buckets, path, headerPath, header)
+				if err != nil {
+					return nil, err
+				}
+			case mp.FileSize():
+			default:
+				return nil, types.ErrPrimaryWrongFileSize{mp.FileSize(), header.PrimaryFileSize}
+			}
+		}
 	}
 
 	if ctx.Err() != nil {
@@ -240,7 +232,7 @@ func Open(ctx context.Context, path string, primary primary.PrimaryStorage, inde
 		nextPool:    make(bucketPool, bucketPoolSize),
 		length:      types.Position(fi.Size()),
 		basePath:    path,
-		fileCache:   filecache.New(fileCacheSize),
+		fileCache:   fileCache,
 	}
 
 	if gcInterval == 0 {
@@ -309,10 +301,6 @@ func (idx *Index) StorageSize() (int64, error) {
 		fileNum++
 	}
 	return size, nil
-}
-
-func (idx *Index) SetFileCacheSize(size int) {
-	idx.fileCache.SetCacheSize(size)
 }
 
 func scanIndexFile(ctx context.Context, basePath string, fileNum uint32, buckets Buckets, maxFileSize uint32) error {
@@ -702,6 +690,11 @@ func (idx *Index) flushBucket(bucket BucketIndex, newData []byte) (types.Block, 
 	// Write new data to disk. The record list is prefixed with the bucket they
 	// are in. This is needed in order to reconstruct the in-memory buckets
 	// from the index itself.
+	//
+	// If the size of new data is too large to fit in 30 bits, then a bigger
+	// bit prefix, or s 2nd level index is needed.
+	//
+	// TODO: If size >= 1<<30 then the size takes up the following 62 bits.
 	newDataSize := make([]byte, sizePrefixSize)
 	binary.LittleEndian.PutUint32(newDataSize, uint32(len(newData))+uint32(BucketPrefixSize))
 	_, err := idx.writer.Write(newDataSize)
@@ -735,12 +728,20 @@ type bucketBlock struct {
 	blk    types.Block
 }
 
-func (idx *Index) readBucketInfo(bucket BucketIndex) ([]byte, types.Position, uint32, error) {
+func (idx *Index) readCached(bucket BucketIndex) ([]byte, bool) {
 	data, ok := idx.nextPool[bucket]
 	if ok {
-		return data, 0, 0, nil
+		return data, true
 	}
 	data, ok = idx.curPool[bucket]
+	if ok {
+		return data, true
+	}
+	return nil, false
+}
+
+func (idx *Index) readBucketInfo(bucket BucketIndex) ([]byte, types.Position, uint32, error) {
+	data, ok := idx.readCached(bucket)
 	if ok {
 		return data, 0, 0, nil
 	}
@@ -975,11 +976,11 @@ func (i *Index) OutstandingWork() types.Work {
 	return i.outstandingWork
 }
 
-// An iterator over index entries.
+// RawIterator iterates raw index file entries, whether or not they are still
+// valid. Deleted entries are skipped.
 //
-// On each iteration it returns the position of the record within the index
-// together with the raw record list data.
-type IndexIter struct {
+// This is primarily to inspect index files for testing.
+type RawIterator struct {
 	// The index data we are iterating over
 	file *os.File
 	// The current position within the index
@@ -990,14 +991,14 @@ type IndexIter struct {
 	fileNum uint32
 }
 
-func NewIndexIter(basePath string, fileNum uint32) *IndexIter {
-	return &IndexIter{
+func NewRawIterator(basePath string, fileNum uint32) *RawIterator {
+	return &RawIterator{
 		base:    basePath,
 		fileNum: fileNum,
 	}
 }
 
-func (iter *IndexIter) Next() ([]byte, types.Position, bool, error) {
+func (iter *RawIterator) Next() ([]byte, types.Position, bool, error) {
 	if iter.file == nil {
 		file, err := openFileForScan(indexFileName(iter.base, iter.fileNum))
 		if err != nil {
@@ -1043,35 +1044,93 @@ func (iter *IndexIter) Next() ([]byte, types.Position, bool, error) {
 	return data, types.Position(pos), false, nil
 }
 
-func (iter *IndexIter) Close() error {
+func (iter *RawIterator) Close() error {
 	if iter.file == nil {
 		return nil
 	}
 	return iter.file.Close()
 }
 
-func readHeader(filePath string) (Header, error) {
-	data, err := os.ReadFile(filePath)
-	if err != nil {
-		return Header{}, err
-	}
-
-	var header Header
-	err = json.Unmarshal(data, &header)
-	if err != nil {
-		return Header{}, err
-	}
-
-	return header, nil
+// Iterator is an iterator over only valid index entries.
+//
+// On each iteration it returns the position of the record within the index
+// together with the raw record list data.
+type Iterator struct {
+	// bucket is the next bucket to iterate.
+	bucketIndex BucketIndex
+	// index is the Index being iterated.
+	index  *Index
+	rlIter *RecordListIter
 }
 
-func writeHeader(headerPath string, header Header) error {
-	data, err := json.Marshal(&header)
-	if err != nil {
-		return err
+func (idx *Index) NewIterator() *Iterator {
+	return &Iterator{
+		index: idx,
+	}
+}
+
+func (iter *Iterator) Next() (Record, bool, error) {
+	if iter.rlIter != nil {
+		if !iter.rlIter.Done() {
+			return iter.rlIter.Next(), false, nil
+		}
+		iter.rlIter = nil
 	}
 
-	return os.WriteFile(headerPath, data, 0o666)
+	iter.index.flushLock.Lock()
+	defer iter.index.flushLock.Unlock()
+
+next:
+	iter.index.bucketLk.RLock()
+	var bucketPos types.Position
+	for {
+		if int(iter.bucketIndex) >= len(iter.index.buckets) {
+			iter.index.bucketLk.RUnlock()
+			return Record{}, true, nil
+		}
+		bucketPos = iter.index.buckets[iter.bucketIndex]
+		if bucketPos != 0 {
+			// Got non-empty bucket.
+			break
+		}
+		iter.bucketIndex++
+	}
+	iter.index.bucketLk.RUnlock()
+
+	data, cached := iter.index.readCached(iter.bucketIndex)
+	if cached {
+		// Add the size prefix to the record data.
+		newData := make([]byte, len(data)+sizePrefixSize)
+		binary.LittleEndian.PutUint32(newData, uint32(len(data)))
+		copy(newData[sizePrefixSize:], data)
+		data = newData
+	} else {
+		localPos, fileNum := localizeBucketPos(bucketPos, iter.index.maxFileSize)
+		file, err := iter.index.fileCache.Open(indexFileName(iter.index.basePath, fileNum))
+		if err != nil {
+			return Record{}, false, err
+		}
+		defer iter.index.fileCache.Close(file)
+
+		sizeBuf := make([]byte, sizePrefixSize)
+		if _, err = file.ReadAt(sizeBuf, int64(localPos-sizePrefixSize)); err != nil {
+			return Record{}, false, err
+		}
+		data = make([]byte, binary.LittleEndian.Uint32(sizeBuf))
+		if _, err = file.ReadAt(data, int64(localPos)); err != nil {
+			return Record{}, false, err
+		}
+	}
+	iter.bucketIndex++
+
+	rl := NewRecordList(data)
+	iter.rlIter = rl.Iter()
+	if iter.rlIter.Done() {
+		iter.rlIter = nil
+		goto next
+	}
+
+	return iter.rlIter.Next(), false, nil
 }
 
 func max(a, b int) int {
@@ -1161,4 +1220,151 @@ func findLastIndex(basePath string, fileNum uint32) (uint32, error) {
 		fileNum++
 	}
 	return lastFound, nil
+}
+
+func copyFile(src, dst string) error {
+	fin, err := os.Open(src)
+	if err != nil {
+		return err
+	}
+	defer fin.Close()
+
+	fout, err := os.Create(dst)
+	if err != nil {
+		return err
+	}
+	defer fout.Close()
+
+	_, err = io.Copy(fout, fin)
+	return err
+}
+
+// remapIndex updates all the primary offset in each record from the location
+// in the single primary file to the correct location in the separate primary
+// files. Remapping is done on a copy of each original index file so that if
+// remapping the index files is not completed, there are no files in a
+// partially remapped state. This allows remapping to resume from where it left
+// off, without corrupting any files that were already remapped.
+func remapIndex(ctx context.Context, mp *mhprimary.MultihashPrimary, buckets Buckets, basePath, headerPath string, header Header) error {
+	remapper, err := mp.NewIndexRemapper()
+	if err != nil {
+		return err
+	}
+	if remapper == nil {
+		return nil
+	}
+
+	log.Infow("Remapping primary offsets in index")
+
+	maxFileSize := header.MaxFileSize
+	fileBuckets := make(map[uint32][]int)
+
+	var indexTotal int
+	for i, offset := range buckets {
+		ok, fileNum := bucketPosToFileNum(offset, maxFileSize)
+		if ok {
+			fileBuckets[fileNum] = append(fileBuckets[fileNum], i)
+			indexTotal++
+		}
+	}
+
+	var fileCount, indexCount, recordCount int
+	var scratch []byte
+	sizeBuf := make([]byte, sizePrefixSize)
+
+	for fileNum, bucketPrefixes := range fileBuckets {
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+		fileName := indexFileName(basePath, fileNum)
+		tmpName := fileName + ".tmp"
+		doneName := fileName + ".remapped"
+
+		// If this file was already remapped, skip it.
+		_, err = os.Stat(doneName)
+		if !os.IsNotExist(err) {
+			log.Infow("index file already remapped", "file", fileName)
+			continue
+		}
+
+		err = copyFile(fileName, tmpName)
+		if err != nil {
+			return err
+		}
+
+		file, err := os.OpenFile(tmpName, os.O_RDWR, 0644)
+		if err != nil {
+			return fmt.Errorf("remap cannot open index file %s: %w", fileName, err)
+		}
+
+		for _, pfx := range bucketPrefixes {
+			// Read the record list from disk and remap the primary file offset
+			// in each record in the record list.
+			localPos := buckets[pfx] - (types.Position(fileNum) * types.Position(maxFileSize))
+			if _, err = file.ReadAt(sizeBuf, int64(localPos-sizePrefixSize)); err != nil {
+				return fmt.Errorf("cannot read record list size from index file %s: %w", file.Name(), err)
+			}
+			size := binary.LittleEndian.Uint32(sizeBuf)
+			if len(scratch) < int(size) {
+				scratch = make([]byte, size)
+			}
+			data := scratch[:size]
+			if _, err = file.ReadAt(data, int64(localPos)); err != nil {
+				return fmt.Errorf("cannot read record list from index file %s: %w", file.Name(), err)
+			}
+			records := NewRecordList(data)
+			recIter := records.Iter()
+			for !recIter.Done() {
+				record := recIter.Next()
+				offset, err := remapper.RemapOffset(record.Block.Offset)
+				if err != nil {
+					return err
+				}
+				binary.LittleEndian.PutUint64(records[record.Pos:], uint64(offset))
+				recordCount++
+			}
+			if _, err = file.WriteAt(data, int64(localPos)); err != nil {
+				return fmt.Errorf("failed to remap primary offset in index file %s: %w", fileName, err)
+			}
+			indexCount++
+		}
+
+		if err = file.Close(); err != nil {
+			log.Errorw("Error closing remapped index file", "err", err, "path", fileName)
+		}
+
+		// Create a ".remapped" file to indicate this file was remapped, and
+		// rename the temp file to the original index file name.
+		doneFile, err := os.Create(doneName)
+		if err != nil {
+			log.Errorw("Error creating remapped file", "err", err, "file", doneName)
+		}
+		if err = doneFile.Close(); err != nil {
+			log.Errorw("Error closeing remapped file", "err", err, "file", doneName)
+		}
+
+		if err = os.Rename(tmpName, fileName); err != nil {
+			return fmt.Errorf("error renaming remapped file %s to %s: %w", tmpName, fileName, err)
+		}
+
+		fileCount++
+		log.Infof("Remapped index file %q: %.1f%% done", filepath.Base(fileName), float64(1000*indexCount/indexTotal)/10)
+	}
+
+	// Update the header to indicate remapping is completed.
+	header.PrimaryFileSize = mp.FileSize()
+	if err = writeHeader(headerPath, header); err != nil {
+		return err
+	}
+
+	// Remove the completion marker files.
+	for fileNum := range fileBuckets {
+		doneName := indexFileName(basePath, fileNum) + ".remapped"
+		if err = os.Remove(doneName); err != nil {
+			log.Errorw("Error removing remapped marker", "file", doneName, "err", err)
+		}
+	}
+
+	log.Infow("Remapped primary offsets", "fileCount", fileCount, "recordCount", recordCount)
+	return nil
 }

@@ -29,3 +29,9 @@ type ErrIndexWrongFileSize [2]uint32
 func (e ErrIndexWrongFileSize) Error() string {
 	return fmt.Sprintf("Index file size limit is %d, expected %d", e[0], e[1])
 }
+
+type ErrPrimaryWrongFileSize [2]uint32
+
+func (e ErrPrimaryWrongFileSize) Error() string {
+	return fmt.Sprintf("Primary file size limit is %d, expected %d", e[0], e[1])
+}

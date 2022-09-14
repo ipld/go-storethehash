@@ -55,6 +55,9 @@ func NewOpenFile(capacity int, openFlag int, openPerm os.FileMode) *FileCache {
 // that. The file is subsequently retrievable without opening it again, unless
 // it has been removed from the FileCache.
 //
+// All returned os.File instances are shared, so opeartions on these files must
+// use methods that do not depend on the current file position.
+//
 // Every call to Open must be accompanied by a call to Close. Otherwise,
 // reference counts will not be adjusted correctly and file handles will leak.
 func (c *FileCache) Open(name string) (*os.File, error) {
