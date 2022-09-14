@@ -435,37 +435,35 @@ func (s *Store) flushTick() {
 	s.rateLk.Unlock()
 
 	if flushNow {
+		flushNotice := s.flushNotifier()
 		select {
 		case s.flushNow <- struct{}{}:
 		default:
 			// Already signaled, but flush not yet started. No need to wait
 			// since the existing unread signal guarantees the a flush.
 		}
-		s.waitFlush()
+		log.Info("Work ingress rate exceeded flush rate, waiting for flush")
+		<-flushNotice
 	}
 }
 
-func (s *Store) waitFlush() {
+func (s *Store) flushNotifier() <-chan struct{} {
 	s.flushNoticeMutex.Lock()
+	defer s.flushNoticeMutex.Unlock()
 
 	if s.flushNotice == nil {
 		s.flushNotice = make(chan struct{})
 	}
-	noticeChan := s.flushNotice
-
-	s.flushNoticeMutex.Unlock()
-
-	<-noticeChan
+	return s.flushNotice
 }
 
 func (s *Store) notifyFlush() {
 	s.flushNoticeMutex.Lock()
-	noticeChan := s.flushNotice
-	s.flushNoticeMutex.Unlock()
-
-	if noticeChan != nil {
-		close(noticeChan)
+	if s.flushNotice != nil {
+		close(s.flushNotice)
+		s.flushNotice = nil
 	}
+	s.flushNoticeMutex.Unlock()
 }
 
 func (s *Store) commit() (types.Work, error) {
