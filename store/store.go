@@ -37,7 +37,7 @@ type Store struct {
 	err     error
 
 	rateLk    sync.RWMutex
-	rate      float64 // rate at which data can be flushed
+	flushRate float64 // rate at which data can be flushed
 	burstRate types.Work
 	lastFlush time.Time
 
@@ -46,6 +46,9 @@ type Store struct {
 	flushNow     chan struct{}
 	syncInterval time.Duration
 	immutable    bool
+
+	flushNoticeMutex sync.Mutex
+	flushNotice      chan struct{}
 }
 
 // OpenStore opens the index and returns a Store with the specified primary type.
@@ -413,25 +416,55 @@ func (s *Store) getPrimaryKeyData(blk types.Block, indexKey []byte) ([]byte, []b
 func (s *Store) flushTick() {
 	now := time.Now()
 	s.rateLk.Lock()
-	if s.rate == 0 {
+	if s.flushRate == 0 {
 		s.rateLk.Unlock()
 		return
 	}
 	elapsed := now.Sub(s.lastFlush)
 	// TODO: move this Outstanding calculation into Pool?
 	work := s.index.OutstandingWork() + s.index.Primary.OutstandingWork() + s.freelist.OutstandingWork()
-	rate := math.Ceil(float64(work) / elapsed.Seconds())
-	flushNow := rate > s.rate && work > s.burstRate
+	inRate := math.Ceil(float64(work) / elapsed.Seconds())
+
+	// If the rate of incoming work exceeds the rate that work can be flushed
+	// at, and there is enough work to be concerned about, then trigger an
+	// immediate flush and wait for the flush to complete. It is necessary to
+	// wait for the flush, otherwise more work could continue to come in and be
+	// stored in memory faster that flushes could handle it, and this could
+	// lead to memory exhaustion.
+	flushNow := inRate > s.flushRate && work > s.burstRate
 	s.rateLk.Unlock()
 
 	if flushNow {
 		select {
 		case s.flushNow <- struct{}{}:
 		default:
-			// Already signaled, but flush not yet started.  No need to wait to
-			// signal again since the existing unread signal guarantees the
-			// change will be written.
+			// Already signaled, but flush not yet started. No need to wait
+			// since the existing unread signal guarantees the a flush.
 		}
+		s.waitFlush()
+	}
+}
+
+func (s *Store) waitFlush() {
+	s.flushNoticeMutex.Lock()
+
+	if s.flushNotice == nil {
+		s.flushNotice = make(chan struct{})
+	}
+	noticeChan := s.flushNotice
+
+	s.flushNoticeMutex.Unlock()
+
+	<-noticeChan
+}
+
+func (s *Store) notifyFlush() {
+	s.flushNoticeMutex.Lock()
+	noticeChan := s.flushNotice
+	s.flushNoticeMutex.Unlock()
+
+	if noticeChan != nil {
+		close(noticeChan)
 	}
 }
 
@@ -489,10 +522,11 @@ func (s *Store) Flush() error {
 
 	if work > types.Work(s.burstRate) {
 		s.rateLk.Lock()
-		s.rate = rate
+		s.flushRate = rate
 		s.rateLk.Unlock()
 	}
 
+	s.notifyFlush()
 	return nil
 }
 
