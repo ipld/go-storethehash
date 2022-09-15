@@ -36,19 +36,17 @@ type Store struct {
 	running bool
 	err     error
 
-	rateLk    sync.RWMutex
-	flushRate float64 // rate at which data can be flushed
-	burstRate types.Work
-	lastFlush time.Time
+	rateLk      sync.RWMutex
+	flushRate   float64 // rate at which data can be flushed
+	burstRate   types.Work
+	lastFlush   time.Time
+	flushNotice chan struct{}
 
 	closed       chan struct{}
 	closing      chan struct{}
 	flushNow     chan struct{}
 	syncInterval time.Duration
 	immutable    bool
-
-	flushNoticeMutex sync.Mutex
-	flushNotice      chan struct{}
 }
 
 // OpenStore opens the index and returns a Store with the specified primary type.
@@ -391,7 +389,6 @@ func (s *Store) getPrimaryKeyData(blk types.Block, indexKey []byte) ([]byte, []b
 		if _, err = s.index.Remove(indexKey); err != nil {
 			return nil, nil, fmt.Errorf("error removing unusable key: %w", err)
 		}
-		s.flushTick()
 		return nil, nil, nil
 	}
 
@@ -414,56 +411,54 @@ func (s *Store) getPrimaryKeyData(blk types.Block, indexKey []byte) ([]byte, []b
 }
 
 func (s *Store) flushTick() {
-	now := time.Now()
 	s.rateLk.Lock()
-	if s.flushRate == 0 {
-		s.rateLk.Unlock()
+	flushRate := s.flushRate
+	lastFlush := s.lastFlush
+	s.rateLk.Unlock()
+
+	if flushRate == 0 {
+		// Do not know the flush rate yet.
 		return
 	}
-	elapsed := now.Sub(s.lastFlush)
-	// TODO: move this Outstanding calculation into Pool?
+
 	work := s.index.OutstandingWork() + s.index.Primary.OutstandingWork() + s.freelist.OutstandingWork()
+	if work <= s.burstRate {
+		// Not enough work to be concerned.
+		return
+	}
+
+	// Calculate inbound rate of data.
+	elapsed := time.Since(lastFlush)
 	inRate := math.Ceil(float64(work) / elapsed.Seconds())
 
 	// If the rate of incoming work exceeds the rate that work can be flushed
-	// at, and there is enough work to be concerned about, then trigger an
-	// immediate flush and wait for the flush to complete. It is necessary to
-	// wait for the flush, otherwise more work could continue to come in and be
-	// stored in memory faster that flushes could handle it, and this could
-	// lead to memory exhaustion.
-	flushNow := inRate > s.flushRate && work > s.burstRate
-	s.rateLk.Unlock()
+	// at, and there is enough work to be concerned about (work > s.burstRate),
+	// then trigger an immediate flush and wait for the flush to complete. It
+	// is necessary to wait for the flush, otherwise more work could continue
+	// to come in and be stored in memory faster that flushes could handle it,
+	// leading to memory exhaustion.
+	var flushNotice <-chan struct{}
+	if inRate > flushRate {
+		// Get a channel that broadcasts next flush completion.
+		s.rateLk.Lock()
+		if s.flushNotice == nil {
+			s.flushNotice = make(chan struct{})
+		}
+		flushNotice = s.flushNotice
+		s.rateLk.Unlock()
 
-	if flushNow {
-		flushNotice := s.flushNotifier()
+		// Trigger flush now, non-blocking.
 		select {
 		case s.flushNow <- struct{}{}:
 		default:
 			// Already signaled, but flush not yet started. No need to wait
 			// since the existing unread signal guarantees the a flush.
 		}
-		log.Info("Work ingress rate exceeded flush rate, waiting for flush")
+		log.Infow("Work ingress rate exceeded flush rate, waiting for flush", "inRate", inRate, "flushRate", s.flushRate, "elapsed", elapsed, "work", work, "burstRate", s.burstRate)
+
+		// Wait for next flush to complete.
 		<-flushNotice
 	}
-}
-
-func (s *Store) flushNotifier() <-chan struct{} {
-	s.flushNoticeMutex.Lock()
-	defer s.flushNoticeMutex.Unlock()
-
-	if s.flushNotice == nil {
-		s.flushNotice = make(chan struct{})
-	}
-	return s.flushNotice
-}
-
-func (s *Store) notifyFlush() {
-	s.flushNoticeMutex.Lock()
-	if s.flushNotice != nil {
-		close(s.flushNotice)
-		s.flushNotice = nil
-	}
-	s.flushNoticeMutex.Unlock()
 }
 
 func (s *Store) commit() (types.Work, error) {
@@ -514,17 +509,23 @@ func (s *Store) Flush() error {
 		return err
 	}
 
-	now := time.Now()
-	elapsed := now.Sub(lastFlush)
-	rate := math.Ceil(float64(work) / elapsed.Seconds())
-
+	var rate float64
 	if work > types.Work(s.burstRate) {
-		s.rateLk.Lock()
-		s.flushRate = rate
-		s.rateLk.Unlock()
+		now := time.Now()
+		elapsed := now.Sub(lastFlush)
+		rate = math.Ceil(float64(work) / elapsed.Seconds())
 	}
 
-	s.notifyFlush()
+	s.rateLk.Lock()
+	if rate != 0 {
+		s.flushRate = rate
+	}
+	if s.flushNotice != nil {
+		close(s.flushNotice)
+		s.flushNotice = nil
+	}
+	s.rateLk.Unlock()
+
 	return nil
 }
 
