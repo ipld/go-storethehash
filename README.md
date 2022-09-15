@@ -50,6 +50,19 @@ There are various implementations of a primary storage provided.
 
 A freelist is a list of primary storage locations that are no longer used due to updates or deletes. The freelist is maintained is intended for use in primary storage compaction and in reuse of primary storage space. This is not yet implemented.
 
+### Flush and rate limiting design
+
+Storethehash tracks how fast data can be flushed to disk. When new data is put into storethehash, a check is done to see:
+- If the data is coming in faster than it can be flushed, and ...
+- If the amount of data accumulated in memory, since the last flush, is more than a configured threshold (`BurstRate`).
+
+When both of the above conditions are true, an immediate flush is triggered and its completion waited for.
+
+#### Rate limiting
+Rate Limiting is accomplished by waiting for the triggered flush.
+
+If data continues to come in at this rate, then even continuous flushes will not keep up. During each flush, more data will accumulate in memory than was flushed. The next flush will handle that larger amount of data, but will build up even data more in memory, and so on. At some point, storethehash needs to temporarily stop accepting more data to allow flushes to catch up to what has built up in memory. The point this stop happens is after the rate-triggered flush is signaled, and activity resumes upon completion of the flush. If multiple goroutines trigger a flush due to incoming data date at the same time, they will only trigger a single flush and will all receive notification of its completion. 
+
 ## Trade-offs
 
 This storage is meant to also work with larger deployments with 100s of millions of keys. There is a trade-off that needs to be made between the index growth and the memory usage. The lower the memory usage the larger the record lists become. There is some more overhead involved but here is an example of the approximate usage if you would have 512m keys.
