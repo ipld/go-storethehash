@@ -61,7 +61,7 @@ When both of the above conditions are true, an immediate flush is triggered and 
 #### Rate limiting
 Rate Limiting is accomplished by waiting for the triggered flush.
 
-If data continues to come in at this rate, then even continuous flushes will not keep up. During each flush, more data will accumulate in memory than was flushed. The next flush will handle that larger amount of data, but will build up even data more in memory, and so on. At some point, storethehash needs to temporarily stop accepting more data to allow flushes to catch up to what has built up in memory. The point this stop happens is after the rate-triggered flush is signaled, and activity resumes upon completion of the flush. If multiple goroutines trigger a flush due to incoming data date at the same time, they will only trigger a single flush and will all receive notification of its completion. 
+If data continues to come in at a rate faster than can be flushed, then even continuous flushes will not keep up. During each flush, more data will accumulate in memory than was flushed. The next flush will handle that larger amount of data, but will build up even data more in memory, and so on. At some point, storethehash needs to temporarily stop accepting more data to allow flushes to catch up to what has built up in memory. The is done with a _synchronous_ flush when the incoming data rate exceeds the flush rate and the amount of unflushed data is greater then the configured `BurstRate`. If multiple goroutines trigger a synchronous flush while one is already executing, they will wait on the flush already in progress and will all receive notification of its completion. 
 
 ## Trade-offs
 

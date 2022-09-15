@@ -74,8 +74,8 @@ func SyncInterval(syncInterval time.Duration) Option {
 	}
 }
 
-// BurstRate specifies how much unwritten data can accumulate, at a rate faster
-// than can be flushed, before causing data to be flushed to disk.
+// BurstRate specifies how much data can accumulate in memory, at a rate faster
+// than can be flushed, before causing a synchronous flush.
 func BurstRate(burstRate uint64) Option {
 	return func(c *config) {
 		c.burstRate = types.Work(burstRate)
