@@ -17,6 +17,11 @@ import (
 
 var log = logging.Logger("storethehash/mhprimary")
 
+// defaultLowUsePercent is the default percentage of the file that must be
+// composed of free records to be considered low-use. Records will be relocated
+// from low-use files over time.
+const defaultLowUsePercent = 85
+
 type primaryGC struct {
 	freeList    *freelist.FreeList
 	primary     *MultihashPrimary
@@ -76,7 +81,7 @@ func (gc *primaryGC) run(interval, timeLimit time.Duration) {
 				defer close(gcDone)
 
 				log.Infow("GC started")
-				count, err := gc.gc(ctx, timeLimit)
+				count, err := gc.gc(ctx, timeLimit, defaultLowUsePercent)
 				if err != nil {
 					switch err {
 					case context.DeadlineExceeded:
@@ -99,7 +104,7 @@ func (gc *primaryGC) run(interval, timeLimit time.Duration) {
 
 // gc searches for and removes stale primary files. Returns the number of unused
 // primary files that were removed.
-func (gc *primaryGC) gc(ctx context.Context, timeLimit time.Duration) (int, error) {
+func (gc *primaryGC) gc(ctx context.Context, timeLimit time.Duration, lowUsePercent int64) (int, error) {
 	if timeLimit != 0 {
 		var cancel context.CancelFunc
 		ctx, cancel = context.WithTimeout(ctx, timeLimit)
@@ -130,7 +135,7 @@ func (gc *primaryGC) gc(ctx context.Context, timeLimit time.Duration) (int, erro
 
 		filePath := primaryFileName(gc.primary.basePath, fileNum)
 
-		dead, err := gc.reapRecords(ctx, fileNum)
+		dead, err := gc.reapRecords(ctx, fileNum, lowUsePercent)
 		if err != nil {
 			if err == context.DeadlineExceeded {
 				log.Infow("GC stopped at time limit", "limit", timeLimit)
@@ -159,7 +164,7 @@ func (gc *primaryGC) gc(ctx context.Context, timeLimit time.Duration) (int, erro
 
 // reapRecords removes empty records from the end of the file. If the file is
 // empty, then returns true to indicate the file can be deleted.
-func (gc *primaryGC) reapRecords(ctx context.Context, fileNum uint32) (bool, error) {
+func (gc *primaryGC) reapRecords(ctx context.Context, fileNum uint32, lowUsePercent int64) (bool, error) {
 	file, err := os.OpenFile(primaryFileName(gc.primary.basePath, fileNum), os.O_RDWR, 0644)
 	if err != nil {
 		return false, fmt.Errorf("cannot open primary file: %w", err)
@@ -267,11 +272,10 @@ func (gc *primaryGC) reapRecords(ctx context.Context, fileNum uint32) (bool, err
 		return false, nil
 	}
 
-	// If 75% or more of the records in the file are free, rewrite the last 2
-	// records. that are still in use, into a later primary. This will allow
-	// low-use primary files to evaporate over time.
-	log.Debugf("%s free=%d busy=%d", fileName, totalFree, totalBusy)
-	if 4*totalFree >= 3*(totalFree+totalBusy) {
+	// If a sufficient percent of the records in the file are free, rewrite the
+	// last 2 records, that are still in use, into a later primary. This will
+	// allow low-use primary files to evaporate over time.
+	if 100*totalFree >= lowUsePercent*(totalFree+totalBusy) {
 		scratch := make([]byte, 1024)
 
 		for busyAt >= 0 {
@@ -310,7 +314,7 @@ func (gc *primaryGC) reapRecords(ctx context.Context, fileNum uint32) (bool, err
 			if err = gc.updateIndex(indexKey, fileOffset); err != nil {
 				return false, fmt.Errorf("cannot update index with new record location: %w", err)
 			}
-			log.Infow("Moved record from end of low-use file", "from", fileName)
+			log.Infow("Moved record from end of low-use file", "from", fileName, "free", totalFree, "busy", totalBusy)
 
 			// Do not truncate file here, because moved record may not be
 			// written yet. Instead put moved record onto freelist and let next

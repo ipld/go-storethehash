@@ -15,11 +15,12 @@ import (
 )
 
 func TestGC(t *testing.T) {
+	const lowUsePercent = 74
+
 	ctx := context.Background()
 	tempDir := t.TempDir()
 	indexPath := filepath.Join(tempDir, "storethehash.index")
 	dataPath := filepath.Join(tempDir, "storethehash.data")
-
 	t.Logf("Creating store in directory %s\n", tempDir)
 
 	store, err := store.OpenStore(ctx, store.MultihashPrimary, dataPath, indexPath, false, store.GCInterval(time.Hour), store.PrimaryFileSize(1024), store.IndexFileSize(10240), store.SyncInterval(time.Minute))
@@ -68,7 +69,7 @@ func TestGC(t *testing.T) {
 	primaryIface := store.Primary()
 	primary := primaryIface.(*mhprimary.MultihashPrimary)
 
-	fileCount, err := primary.GC(ctx)
+	fileCount, err := primary.GC(ctx, lowUsePercent)
 	require.NoError(t, err)
 	require.Equal(t, 1, fileCount)
 
@@ -79,7 +80,7 @@ func TestGC(t *testing.T) {
 	require.FileExists(t, primary2)
 
 	t.Logf("Running primary GC with not additional removals")
-	fileCount, err = primary.GC(ctx)
+	fileCount, err = primary.GC(ctx, lowUsePercent)
 	require.NoError(t, err)
 	require.Zero(t, fileCount)
 
@@ -98,7 +99,7 @@ func TestGC(t *testing.T) {
 	require.NoError(t, err)
 
 	t.Logf("Running primary GC")
-	fileCount, err = primary.GC(ctx)
+	fileCount, err = primary.GC(ctx, lowUsePercent)
 	require.NoError(t, err)
 	require.Zero(t, fileCount)
 
@@ -119,7 +120,7 @@ func TestGC(t *testing.T) {
 	require.NoError(t, err)
 
 	t.Logf("Running primary GC on low-use file to evaporate remaining record")
-	fileCount, err = primary.GC(ctx)
+	fileCount, err = primary.GC(ctx, lowUsePercent)
 	require.NoError(t, err)
 	require.Zero(t, fileCount)
 
@@ -131,7 +132,7 @@ func TestGC(t *testing.T) {
 	require.NoError(t, err)
 
 	t.Logf("Running primary GC on low-use file to remove file")
-	fileCount, err = primary.GC(ctx)
+	fileCount, err = primary.GC(ctx, lowUsePercent)
 	require.NoError(t, err)
 	require.Equal(t, 1, fileCount)
 
