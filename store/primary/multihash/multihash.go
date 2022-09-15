@@ -168,7 +168,7 @@ func (mp *MultihashPrimary) StartGC(freeList *freelist.FreeList, interval, timeL
 	mp.gc = newGC(mp, freeList, interval, timeLimit, updateIndex)
 }
 
-func (mp *MultihashPrimary) GC(ctx context.Context) (int, error) {
+func (mp *MultihashPrimary) GC(ctx context.Context, lowUsePercent int64) (int, error) {
 	mp.gcMutex.Lock()
 	gc := mp.gc
 	mp.gcMutex.Unlock()
@@ -177,7 +177,7 @@ func (mp *MultihashPrimary) GC(ctx context.Context) (int, error) {
 		return 0, errors.New("gc disabled")
 	}
 
-	return gc.gc(ctx, 0)
+	return gc.gc(ctx, 0, lowUsePercent)
 }
 
 func (cp *MultihashPrimary) FileSize() uint32 {
