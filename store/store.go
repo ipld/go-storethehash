@@ -437,14 +437,13 @@ func (s *Store) flushTick() {
 	// is necessary to wait for the flush, otherwise more work could continue
 	// to come in and be stored in memory faster that flushes could handle it,
 	// leading to memory exhaustion.
-	var flushNotice <-chan struct{}
 	if inRate > flushRate {
 		// Get a channel that broadcasts next flush completion.
 		s.rateLk.Lock()
 		if s.flushNotice == nil {
 			s.flushNotice = make(chan struct{})
 		}
-		flushNotice = s.flushNotice
+		flushNotice := s.flushNotice
 		s.rateLk.Unlock()
 
 		// Trigger flush now, non-blocking.
