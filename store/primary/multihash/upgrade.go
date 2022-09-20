@@ -265,10 +265,11 @@ func applyFreeList(ctx context.Context, freeList *freelist.FreeList, filePath st
 		for {
 			free, err := flIter.Next()
 			if err != nil {
-				if err == io.EOF {
-					break
+				// Done reading freelist; log if error.
+				if err != io.EOF {
+					log.Errorw("error reading freelist", "err", err)
 				}
-				return fmt.Errorf("error reading freelist: %w", err)
+				break
 			}
 
 			offset := int64(free.Offset)
