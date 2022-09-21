@@ -265,7 +265,7 @@ func scanIndex(ctx context.Context, basePath string, fileNum uint32, buckets Buc
 			if os.IsNotExist(err) {
 				break
 			}
-			return 0, fmt.Errorf("error scanning index file %q: %w", indexFileName(basePath, fileNum), err)
+			return 0, fmt.Errorf("error scanning index file %s: %w", indexFileName(basePath, fileNum), err)
 		}
 		lastFileNum = fileNum
 		fileNum++
@@ -1348,7 +1348,7 @@ func remapIndex(ctx context.Context, mp *mhprimary.MultihashPrimary, buckets Buc
 		}
 
 		fileCount++
-		log.Infof("Remapped index file %q: %.1f%% done", filepath.Base(fileName), float64(1000*indexCount/indexTotal)/10)
+		log.Infof("Remapped index file %s: %.1f%% done", filepath.Base(fileName), float64(1000*indexCount/indexTotal)/10)
 	}
 
 	// Update the header to indicate remapping is completed.

@@ -150,10 +150,10 @@ func chunkOldPrimary(ctx context.Context, name string, fileSizeLimit int64) (uin
 	for {
 		_, err = file.ReadAt(sizeBuf, pos)
 		if err != nil {
-			if err == io.EOF {
-				break
+			if err != io.EOF {
+				log.Errorw("error reading primary", "err", err)
 			}
-			return 0, err
+			break
 		}
 		size := binary.LittleEndian.Uint32(sizeBuf)
 		if _, err = writer.Write(sizeBuf); err != nil {
@@ -175,7 +175,8 @@ func chunkOldPrimary(ctx context.Context, name string, fileSizeLimit int64) (uin
 
 		if !del {
 			if _, err = file.ReadAt(data, pos); err != nil {
-				return 0, fmt.Errorf("cannot read record data: %w", err)
+				log.Errorw("error reading primary", "err", err)
+				break
 			}
 		}
 		_, err := writer.Write(data)
@@ -200,7 +201,7 @@ func chunkOldPrimary(ctx context.Context, name string, fileSizeLimit int64) (uin
 			if err != nil {
 				return 0, err
 			}
-			log.Infof("Upgrade created primary file %q: %.1f%% done", filepath.Base(outName), float64(1000*pos/total)/10)
+			log.Infof("Upgrade created primary file %s: %.1f%% done", filepath.Base(outName), float64(1000*pos/total)/10)
 			writer.Reset(outFile)
 			written = 0
 		}
