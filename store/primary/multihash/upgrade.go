@@ -100,15 +100,15 @@ func upgradePrimary(ctx context.Context, filePath, headerPath string, maxFileSiz
 
 	fileNum, err := chunkOldPrimary(ctx, filePath, int64(maxFileSize))
 	if err != nil {
-		return 0, err
+		return 0, fmt.Errorf("error chunking primary: %w", err)
 	}
 
 	if err = writeHeader(headerPath, newHeader(maxFileSize)); err != nil {
-		return 0, err
+		return 0, fmt.Errorf("error writing primary info file: %w", err)
 	}
 
 	if err = os.Remove(filePath); err != nil {
-		return 0, err
+		return 0, fmt.Errorf("cannot remove old primary: %w", err)
 	}
 
 	log.Infow("Replaced old primary with multiple files", "replaced", filePath, "files", fileNum+1)
