@@ -103,7 +103,7 @@ func Open(path string, freeList *freelist.FreeList, fileCache *filecache.FileCac
 		// If header does not exist, then upgrade primary.
 		lastPrimaryNum, err = upgradePrimary(context.Background(), path, headerPath, maxFileSize, freeList)
 		if err != nil {
-			return nil, err
+			return nil, fmt.Errorf("error upgrading primary: %w", err)
 		}
 
 		// Header does not exist, so create new one.
