@@ -151,7 +151,7 @@ func chunkOldPrimary(ctx context.Context, name string, fileSizeLimit int64) (uin
 		_, err = file.ReadAt(sizeBuf, pos)
 		if err != nil {
 			if err != io.EOF {
-				log.Errorw("error reading primary", "err", err)
+				log.Errorw("Error reading primary", "err", err)
 			}
 			break
 		}
@@ -175,7 +175,7 @@ func chunkOldPrimary(ctx context.Context, name string, fileSizeLimit int64) (uin
 
 		if !del {
 			if _, err = file.ReadAt(data, pos); err != nil {
-				log.Errorw("error reading primary", "err", err)
+				log.Errorw("Error reading primary", "err", err)
 				break
 			}
 		}
@@ -268,7 +268,7 @@ func applyFreeList(ctx context.Context, freeList *freelist.FreeList, filePath st
 			if err != nil {
 				// Done reading freelist; log if error.
 				if err != io.EOF {
-					log.Errorw("error reading freelist", "err", err)
+					log.Errorw("Error reading freelist", "err", err)
 				}
 				break
 			}
