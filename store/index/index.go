@@ -155,6 +155,7 @@ func Open(ctx context.Context, path string, primary primary.PrimaryStorage, inde
 		return nil, err
 	}
 
+	var rmPool bucketPool
 	var lastIndexNum uint32
 	header, err := readHeader(headerPath)
 	if os.IsNotExist(err) {
@@ -194,7 +195,7 @@ func Open(ctx context.Context, path string, primary primary.PrimaryStorage, inde
 			switch header.PrimaryFileSize {
 			case 0:
 				// Primary file size is not yet known, so may need to remap index.
-				err = remapIndex(ctx, mp, buckets, path, headerPath, header)
+				rmPool, err = remapIndex(ctx, mp, buckets, path, headerPath, header)
 				if err != nil {
 					return nil, err
 				}
@@ -228,11 +229,16 @@ func Open(ctx context.Context, path string, primary primary.PrimaryStorage, inde
 		headerPath:  headerPath,
 		writer:      bufio.NewWriterSize(file, indexBufferSize),
 		Primary:     primary,
-		curPool:     make(bucketPool, bucketPoolSize),
 		nextPool:    make(bucketPool, bucketPoolSize),
 		length:      types.Position(fi.Size()),
 		basePath:    path,
 		fileCache:   fileCache,
+	}
+
+	if len(rmPool) != 0 {
+		idx.nextPool = rmPool
+		idx.Flush()
+		idx.curPool = nil
 	}
 
 	if gcInterval == 0 {
@@ -1245,13 +1251,13 @@ func copyFile(src, dst string) error {
 // remapping the index files is not completed, there are no files in a
 // partially remapped state. This allows remapping to resume from where it left
 // off, without corrupting any files that were already remapped.
-func remapIndex(ctx context.Context, mp *mhprimary.MultihashPrimary, buckets Buckets, basePath, headerPath string, header Header) error {
+func remapIndex(ctx context.Context, mp *mhprimary.MultihashPrimary, buckets Buckets, basePath, headerPath string, header Header) (bucketPool, error) {
 	remapper, err := mp.NewIndexRemapper()
 	if err != nil {
-		return err
+		return nil, err
 	}
 	if remapper == nil {
-		return nil
+		return nil, nil
 	}
 
 	log.Infow("Remapping primary offsets in index")
@@ -1268,13 +1274,14 @@ func remapIndex(ctx context.Context, mp *mhprimary.MultihashPrimary, buckets Buc
 		}
 	}
 
+	var rmPool bucketPool
 	var fileCount, indexCount, recordCount int
 	var scratch []byte
 	sizeBuf := make([]byte, sizePrefixSize)
 
 	for fileNum, bucketPrefixes := range fileBuckets {
 		if ctx.Err() != nil {
-			return ctx.Err()
+			return nil, ctx.Err()
 		}
 		fileName := indexFileName(basePath, fileNum)
 		tmpName := fileName + ".tmp"
@@ -1290,12 +1297,12 @@ func remapIndex(ctx context.Context, mp *mhprimary.MultihashPrimary, buckets Buc
 
 		err = copyFile(fileName, tmpName)
 		if err != nil {
-			return err
+			return nil, err
 		}
 
 		file, err := os.OpenFile(tmpName, os.O_RDWR, 0644)
 		if err != nil {
-			return fmt.Errorf("remap cannot open index file %s: %w", fileName, err)
+			return nil, fmt.Errorf("remap cannot open index file %s: %w", fileName, err)
 		}
 
 		for _, pfx := range bucketPrefixes {
@@ -1303,7 +1310,7 @@ func remapIndex(ctx context.Context, mp *mhprimary.MultihashPrimary, buckets Buc
 			// in each record in the record list.
 			localPos := buckets[pfx] - (types.Position(fileNum) * types.Position(maxFileSize))
 			if _, err = file.ReadAt(sizeBuf, int64(localPos-sizePrefixSize)); err != nil {
-				return fmt.Errorf("cannot read record list size from index file %s: %w", file.Name(), err)
+				return nil, fmt.Errorf("cannot read record list size from index file %s: %w", file.Name(), err)
 			}
 			size := binary.LittleEndian.Uint32(sizeBuf)
 			if len(scratch) < int(size) {
@@ -1311,21 +1318,39 @@ func remapIndex(ctx context.Context, mp *mhprimary.MultihashPrimary, buckets Buc
 			}
 			data := scratch[:size]
 			if _, err = file.ReadAt(data, int64(localPos)); err != nil {
-				return fmt.Errorf("cannot read record list from index file %s: %w", file.Name(), err)
+				return nil, fmt.Errorf("cannot read record list from index file %s: %w", file.Name(), err)
 			}
 			records := NewRecordList(data)
 			recIter := records.Iter()
+			var delPosList []int
 			for !recIter.Done() {
 				record := recIter.Next()
 				offset, err := remapper.RemapOffset(record.Block.Offset)
 				if err != nil {
-					return err
+					// This offset does not exist in the primary. The primary
+					// was corrupted and this offset is not present in the new
+					// primary. Records record position to delete and write 0
+					// offset than can be deleted later.
+					delPosList = append(delPosList, record.Pos, record.NextPos())
+					log.Errorw("Index has unusable primary offset", "err", err)
 				}
 				binary.LittleEndian.PutUint64(records[record.Pos:], uint64(offset))
 				recordCount++
 			}
 			if _, err = file.WriteAt(data, int64(localPos)); err != nil {
-				return fmt.Errorf("failed to remap primary offset in index file %s: %w", fileName, err)
+				return nil, fmt.Errorf("failed to remap primary offset in index file %s: %w", fileName, err)
+			}
+			if len(delPosList) != 0 {
+				for i := len(delPosList) - 1; i >= 0; i -= 2 {
+					delNext := delPosList[i]
+					delPos := delPosList[i-1]
+					data = records.PutKeys([]KeyPositionPair{}, delPos, delNext)
+					records = NewRecordListRaw(data)
+				}
+				if rmPool == nil {
+					rmPool = make(bucketPool)
+				}
+				rmPool[BucketIndex(pfx)] = data
 			}
 			indexCount++
 		}
@@ -1345,7 +1370,7 @@ func remapIndex(ctx context.Context, mp *mhprimary.MultihashPrimary, buckets Buc
 		}
 
 		if err = os.Rename(tmpName, fileName); err != nil {
-			return fmt.Errorf("error renaming remapped file %s to %s: %w", tmpName, fileName, err)
+			return nil, fmt.Errorf("error renaming remapped file %s to %s: %w", tmpName, fileName, err)
 		}
 
 		fileCount++
@@ -1355,7 +1380,7 @@ func remapIndex(ctx context.Context, mp *mhprimary.MultihashPrimary, buckets Buc
 	// Update the header to indicate remapping is completed.
 	header.PrimaryFileSize = mp.FileSize()
 	if err = writeHeader(headerPath, header); err != nil {
-		return err
+		return nil, err
 	}
 
 	// Remove the completion marker files.
@@ -1367,5 +1392,5 @@ func remapIndex(ctx context.Context, mp *mhprimary.MultihashPrimary, buckets Buc
 	}
 
 	log.Infow("Remapped primary offsets", "fileCount", fileCount, "recordCount", recordCount)
-	return nil
+	return rmPool, nil
 }
