@@ -1284,6 +1284,7 @@ func remapIndex(ctx context.Context, mp *mhprimary.MultihashPrimary, buckets Buc
 		_, err = os.Stat(doneName)
 		if !os.IsNotExist(err) {
 			log.Infow("index file already remapped", "file", fileName)
+			indexCount += len(bucketPrefixes)
 			continue
 		}
 
