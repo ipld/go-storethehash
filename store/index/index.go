@@ -1257,7 +1257,9 @@ func remapIndex(ctx context.Context, mp *mhprimary.MultihashPrimary, buckets Buc
 		return nil, err
 	}
 	if remapper == nil {
-		return nil, nil
+		// Update the header to indicate remapping is completed.
+		header.PrimaryFileSize = mp.FileSize()
+		return nil, writeHeader(headerPath, header)
 	}
 
 	log.Infow("Remapping primary offsets in index")
