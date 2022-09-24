@@ -1331,8 +1331,9 @@ func remapIndex(ctx context.Context, mp *mhprimary.MultihashPrimary, buckets Buc
 				if err != nil {
 					// This offset does not exist in the primary. The primary
 					// was corrupted and this offset is not present in the new
-					// primary. Records record position to delete and write 0
-					// offset than can be deleted later.
+					// primary. Create new record list data, with the bad
+					// record deleted, and add it to a work pool for later
+					// deletion from the index.
 					delPosList = append(delPosList, record.Pos, record.NextPos())
 					log.Errorw("Index has unusable primary offset", "err", err)
 				}
