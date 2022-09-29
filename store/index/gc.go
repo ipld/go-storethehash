@@ -94,7 +94,7 @@ func (index *Index) garbageCollector(interval, timeLimit time.Duration) {
 // gc searches for and removes stale index files. Returns the number of unused
 // index files that were removed and the number of freeFiles that were found.
 func (index *Index) gc(ctx context.Context, timeLimit time.Duration, scanFree bool) (int, int, error) {
-	var freeCount int
+	var freeCount, rmCount int
 	var err error
 
 	if timeLimit != 0 {
@@ -104,11 +104,11 @@ func (index *Index) gc(ctx context.Context, timeLimit time.Duration, scanFree bo
 	}
 
 	if scanFree {
-		freeCount, err = index.truncateFreeFiles(ctx)
+		rmCount, freeCount, err = index.truncateFreeFiles(ctx)
 		if err != nil {
 			return 0, 0, err
 		}
-		log.Infof("Emptied %d unused index file", freeCount)
+		log.Infof("Emptied %d unused index files and removed %d", freeCount, rmCount)
 	}
 
 	header, err := readHeader(index.headerPath)
@@ -133,7 +133,6 @@ func (index *Index) gc(ctx context.Context, timeLimit time.Duration, scanFree bo
 		firstFileNum = header.FirstFile
 	}
 
-	var count int
 	for fileNum := firstFileNum; fileNum != lastFileNum; {
 		indexPath := indexFileName(index.basePath, fileNum)
 
@@ -143,7 +142,7 @@ func (index *Index) gc(ctx context.Context, timeLimit time.Duration, scanFree bo
 				index.gcResumeAt = fileNum
 				index.gcResume = true
 				log.Infow("GC stopped at time limit", "limit", timeLimit)
-				return count, freeCount, nil
+				return rmCount, freeCount, nil
 			}
 			return 0, 0, err
 		}
@@ -161,13 +160,13 @@ func (index *Index) gc(ctx context.Context, timeLimit time.Duration, scanFree bo
 				if err != nil {
 					return 0, 0, err
 				}
-				count++
+				rmCount++
 			}
 		}
 
 		fileNum++
 		if fileNum == lastFileNum {
-			if count != 0 {
+			if rmCount != 0 {
 				// Already seen header.FirstFile.
 				break
 			}
@@ -178,13 +177,13 @@ func (index *Index) gc(ctx context.Context, timeLimit time.Duration, scanFree bo
 			break
 		}
 	}
-	return count, freeCount, nil
+	return rmCount, freeCount, nil
 }
 
-func (index *Index) truncateFreeFiles(ctx context.Context) (int, error) {
+func (index *Index) truncateFreeFiles(ctx context.Context) (int, int, error) {
 	header, err := readHeader(index.headerPath)
 	if err != nil {
-		return 0, fmt.Errorf("cannot read index header: %w", err)
+		return 0, 0, fmt.Errorf("cannot read index header: %w", err)
 	}
 	index.flushLock.Lock()
 	lastFileNum := index.fileNum
@@ -192,7 +191,7 @@ func (index *Index) truncateFreeFiles(ctx context.Context) (int, error) {
 
 	fileCount := lastFileNum - header.FirstFile
 	if fileCount == 0 {
-		return 0, nil
+		return 0, 0, nil
 	}
 
 	busySet := make(map[uint32]struct{}, fileCount)
@@ -211,7 +210,7 @@ func (index *Index) truncateFreeFiles(ctx context.Context) (int, error) {
 		}
 	}
 
-	var freeCount int
+	var freeCount, rmCount int
 	basePath := index.basePath
 
 	for fileNum := header.FirstFile; fileNum != lastFileNum; fileNum++ {
@@ -220,12 +219,27 @@ func (index *Index) truncateFreeFiles(ctx context.Context) (int, error) {
 		}
 
 		if ctx.Err() != nil {
-			return 0, ctx.Err()
+			return 0, 0, ctx.Err()
 		}
 
 		indexPath := indexFileName(basePath, fileNum)
 
 		index.fileCache.Remove(indexPath)
+
+		// If this is first index file, then update header and remove file.
+		if header.FirstFile == fileNum {
+			header.FirstFile++
+			if err = writeHeader(index.headerPath, header); err != nil {
+				return 0, 0, err
+			}
+			if err = os.Remove(indexPath); err != nil {
+				return 0, 0, err
+			}
+			freeCount++
+			rmCount++
+			log.Infow("Removed unused index file", "file", indexPath)
+			continue
+		}
 
 		fi, err := os.Stat(indexPath)
 		if err != nil {
@@ -245,7 +259,7 @@ func (index *Index) truncateFreeFiles(ctx context.Context) (int, error) {
 		log.Infow("Emptied unused index file", "file", indexPath)
 	}
 
-	return freeCount, nil
+	return rmCount, freeCount, nil
 }
 
 // reapIndexRecords scans a single index file, logically deleting records that
