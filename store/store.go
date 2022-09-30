@@ -274,13 +274,11 @@ func (s *Store) run() {
 // files.
 func (s *Store) Close() error {
 	s.stateLk.Lock()
-	open := s.open
-	s.open = false
-
-	if !open {
+	if !s.open {
 		s.stateLk.Unlock()
 		return nil
 	}
+	s.open = false
 
 	running := s.running
 	s.running = false

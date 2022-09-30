@@ -157,11 +157,15 @@ func Open(path string, freeList *freelist.FreeList, fileCache *filecache.FileCac
 }
 
 func (mp *MultihashPrimary) StartGC(freeList *freelist.FreeList, interval, timeLimit time.Duration, updateIndex UpdateIndexFunc) {
+	if freeList == nil || interval == 0 {
+		return
+	}
+
 	mp.gcMutex.Lock()
 	defer mp.gcMutex.Unlock()
 
-	// If GC already started or no free list, then do nothing.
-	if mp.gc != nil || freeList == nil {
+	// If GC already started, then do nothing.
+	if mp.gc != nil {
 		return
 	}
 

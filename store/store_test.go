@@ -280,3 +280,70 @@ func TestRecoverBadKey(t *testing.T) {
 	require.True(t, found)
 	require.Equal(t, value, blks[0].RawData())
 }
+
+func TestTranslate(t *testing.T) {
+	tempDir := t.TempDir()
+
+	indexPath := filepath.Join(tempDir, "storethehash.index")
+	dataPath := filepath.Join(tempDir, "storethehash.data")
+	s, err := store.OpenStore(context.Background(), store.MultihashPrimary, dataPath, indexPath, false, store.IndexBitSize(24), store.GCInterval(0))
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, s.Close()) })
+
+	blks := testutil.GenerateBlocksOfSize(5, 100)
+
+	t.Logf("Createing store with 24-bit index")
+	for i := range blks {
+		err = s.Put(blks[i].Cid().Hash(), blks[i].RawData())
+		require.NoError(t, err)
+	}
+
+	removed, err := s.Remove(blks[0].Cid().Hash())
+	require.NoError(t, err)
+	require.True(t, removed)
+
+	require.NoError(t, s.Close())
+
+	// Translate to 30 bits
+	t.Logf("Translating store index from 24-bit to 30-bit")
+	s, err = store.OpenStore(context.Background(), store.MultihashPrimary, dataPath, indexPath, false, store.IndexBitSize(30), store.GCInterval(0))
+	require.NoError(t, err)
+
+	// Check that blocks still exist.
+	for i := 1; i < len(blks); i++ {
+		value, found, err := s.Get(blks[i].Cid().Hash())
+		require.NoError(t, err)
+		require.True(t, found)
+		require.Equal(t, value, blks[i].RawData())
+	}
+
+	// Check that removed block was not found.
+	_, found, err := s.Get(blks[0].Cid().Hash())
+	require.NoError(t, err)
+	require.False(t, found)
+
+	require.NoError(t, s.Close())
+
+	// Translate back to 24 bits.
+	t.Logf("Translating store index from 30-bit to 16-bit")
+	s, err = store.OpenStore(context.Background(), store.MultihashPrimary, dataPath, indexPath, false, store.IndexBitSize(16), store.GCInterval(0))
+	require.NoError(t, err)
+
+	// Check that blocks still exist.
+	for i := 1; i < len(blks); i++ {
+		value, found, err := s.Get(blks[i].Cid().Hash())
+		require.NoError(t, err)
+		require.True(t, found)
+		require.Equal(t, value, blks[i].RawData())
+	}
+
+	// Check that removed block was not found.
+	_, found, err = s.Get(blks[0].Cid().Hash())
+	require.NoError(t, err)
+	require.False(t, found)
+
+	require.NoError(t, s.Close())
+
+	// Check that double close of store is ok.
+	require.NoError(t, s.Close())
+}
