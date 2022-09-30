@@ -287,8 +287,8 @@ func TestTranslate(t *testing.T) {
 	indexPath := filepath.Join(tempDir, "storethehash.index")
 	dataPath := filepath.Join(tempDir, "storethehash.data")
 
-	t.Logf("Createing store with 24-bit index")
-	s, err := store.OpenStore(context.Background(), store.MultihashPrimary, dataPath, indexPath, false, store.IndexBitSize(24), store.GCInterval(0))
+	t.Logf("Createing store with 16-bit index")
+	s, err := store.OpenStore(context.Background(), store.MultihashPrimary, dataPath, indexPath, false, store.IndexBitSize(16), store.GCInterval(0))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, s.Close()) })
 
@@ -306,8 +306,8 @@ func TestTranslate(t *testing.T) {
 	require.NoError(t, s.Close())
 
 	// Translate to 26 bits
-	t.Logf("Translating store index from 24-bit to 26-bit")
-	s, err = store.OpenStore(context.Background(), store.MultihashPrimary, dataPath, indexPath, false, store.IndexBitSize(26), store.GCInterval(0))
+	t.Logf("Translating store index from 16-bit to 24-bit")
+	s, err = store.OpenStore(context.Background(), store.MultihashPrimary, dataPath, indexPath, false, store.IndexBitSize(24), store.GCInterval(0))
 	require.NoError(t, err)
 
 	// Check that blocks still exist.
@@ -326,7 +326,7 @@ func TestTranslate(t *testing.T) {
 	require.NoError(t, s.Close())
 
 	// Translate back to 24 bits.
-	t.Logf("Translating store index from 26-bit to 16-bit")
+	t.Logf("Translating store index from 24-bit to 16-bit")
 	s, err = store.OpenStore(context.Background(), store.MultihashPrimary, dataPath, indexPath, false, store.IndexBitSize(16), store.GCInterval(0))
 	require.NoError(t, err)
 
