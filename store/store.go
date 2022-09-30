@@ -130,7 +130,7 @@ func OpenStore(ctx context.Context, primaryType string, dataPath, indexPath stri
 }
 
 func translateIndex(ctx context.Context, indexPath string, primary primary.PrimaryStorage, indexSizeBits uint8, indexFileSize uint32) error {
-	const progressLogInterval = time.Millisecond //5 * time.Second
+	const progressLogInterval = 5 * time.Second
 
 	log.Infof("Translating index to %d bit prefix", indexSizeBits)
 
@@ -191,7 +191,7 @@ func translateIndex(ctx context.Context, indexPath string, primary primary.Prima
 	}
 	ticker.Stop()
 
-	log.Infof("Translated %d records", count)
+	log.Infof("Translated %d index records", count)
 
 	log.Info("Replacing old index files with new")
 	if err = newIndex.Close(); err != nil {
