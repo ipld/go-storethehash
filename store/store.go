@@ -195,10 +195,10 @@ func translateIndex(ctx context.Context, indexPath string, primary primary.Prima
 
 	log.Info("Replacing old index files with new")
 	if err = newIndex.Close(); err != nil {
-		return fmt.Errorf("Error closing new index: %w", err)
+		return fmt.Errorf("error closing new index: %w", err)
 	}
 	if err = oldIndex.Close(); err != nil {
-		return fmt.Errorf("Error closing old index: %w", err)
+		return fmt.Errorf("error closing old index: %w", err)
 	}
 
 	// Create a temp directory for the old index files and move them there.
