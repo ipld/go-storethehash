@@ -15,6 +15,7 @@ func upgradeIndex(ctx context.Context, name, headerPath string, maxFileSize uint
 	if ctx.Err() != nil {
 		return ctx.Err()
 	}
+
 	inFile, err := os.Open(name)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -26,7 +27,7 @@ func upgradeIndex(ctx context.Context, name, headerPath string, maxFileSize uint
 
 	version, bucketBits, _, err := readOldHeader(inFile)
 	if err != nil {
-		return err
+		return fmt.Errorf("cannot read old index header from %s: %w", name, err)
 	}
 	if version != 2 {
 		return fmt.Errorf("cannot convert unknown header version: %d", version)

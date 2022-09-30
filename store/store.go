@@ -3,8 +3,11 @@ package store
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"math"
+	"os"
+	"path/filepath"
 	"sync"
 	"time"
 
@@ -86,7 +89,16 @@ func OpenStore(ctx context.Context, primaryType string, dataPath, indexPath stri
 		return nil, err
 	}
 
-	index, err := index.Open(ctx, indexPath, primary, c.indexSizeBits, c.indexFileSize, c.gcInterval, c.gcTimeLimit, fileCache)
+	idx, err := index.Open(ctx, indexPath, primary, c.indexSizeBits, c.indexFileSize, c.gcInterval, c.gcTimeLimit, fileCache)
+	var bitSizeError types.ErrIndexWrongBitSize
+	if errors.As(err, &bitSizeError) {
+		err = translateIndex(ctx, indexPath, primary, c.indexSizeBits, c.indexFileSize)
+		if err != nil {
+			err = fmt.Errorf("error translating index to %d bit prefix size: %w", c.indexSizeBits, err)
+		} else {
+			idx, err = index.Open(ctx, indexPath, primary, c.indexSizeBits, c.indexFileSize, c.gcInterval, c.gcTimeLimit, fileCache)
+		}
+	}
 	if err != nil {
 		primary.Close()
 		freeList.Close()
@@ -97,12 +109,12 @@ func OpenStore(ctx context.Context, primaryType string, dataPath, indexPath stri
 	// interfere with any index remapping.
 	mp, ok := primary.(*mhprimary.MultihashPrimary)
 	if ok && mp != nil {
-		mp.StartGC(freeList, c.gcInterval, c.gcTimeLimit, index.Update)
+		mp.StartGC(freeList, c.gcInterval, c.gcTimeLimit, idx.Update)
 	}
 
 	store := &Store{
 		lastFlush:    time.Now(),
-		index:        index,
+		index:        idx,
 		fileCache:    fileCache,
 		freelist:     freeList,
 		open:         true,
@@ -115,6 +127,101 @@ func OpenStore(ctx context.Context, primaryType string, dataPath, indexPath stri
 		immutable:    immutable,
 	}
 	return store, nil
+}
+
+func translateIndex(ctx context.Context, indexPath string, primary primary.PrimaryStorage, indexSizeBits uint8, indexFileSize uint32) error {
+	const progressLogInterval = time.Millisecond //5 * time.Second
+
+	log.Infof("Translating index to %d bit prefix", indexSizeBits)
+
+	oldFileCache := filecache.New(64)
+	defer oldFileCache.Clear()
+	log.Info("Reading old index")
+	oldIndex, err := index.Open(ctx, indexPath, primary, 0, indexFileSize, 0, 0, oldFileCache)
+	if err != nil {
+		return fmt.Errorf("cannot open old index: %w", err)
+	}
+	defer oldIndex.Close()
+
+	indexDir := filepath.Dir(indexPath)
+	indexTmp, err := os.MkdirTemp(indexDir, "new_index")
+	if err != nil {
+		return err
+	}
+	defer os.RemoveAll(indexTmp)
+
+	newIndexPath := filepath.Join(indexTmp, filepath.Base(indexPath))
+	newFileCache := filecache.New(64)
+	defer newFileCache.Clear()
+	newIndex, err := index.Open(ctx, newIndexPath, primary, indexSizeBits, indexFileSize, 0, 0, newFileCache)
+	if err != nil {
+		return fmt.Errorf("cannot open new index: %w", err)
+	}
+	defer newIndex.Close()
+
+	iter := oldIndex.NewIterator()
+	ticker := time.NewTicker(progressLogInterval)
+	defer ticker.Stop()
+	var count int
+	for {
+		select {
+		case <-ticker.C:
+			log.Infof("Translating index records %.1f%% done", iter.Progress())
+		default:
+		}
+
+		rec, done, err := iter.Next()
+		if err != nil {
+			return fmt.Errorf("cannot get next index record: %w", err)
+		}
+		if done {
+			break
+		}
+
+		indexKey, err := primary.GetIndexKey(rec.Block)
+		if err != nil {
+			return fmt.Errorf("cannot get old index key: %w", err)
+		}
+
+		if err = newIndex.Put(indexKey, rec.Block); err != nil {
+			return fmt.Errorf("cannot put new index record: %w", err)
+		}
+
+		count++
+	}
+	ticker.Stop()
+
+	log.Infof("Translated %d records", count)
+
+	log.Info("Replacing old index files with new")
+	if err = newIndex.Close(); err != nil {
+		return fmt.Errorf("Error closing new index: %w", err)
+	}
+	if err = oldIndex.Close(); err != nil {
+		return fmt.Errorf("Error closing old index: %w", err)
+	}
+
+	// Create a temp directory for the old index files and move them there.
+	oldTmp, err := os.MkdirTemp(indexDir, "old_index")
+	if err != nil {
+		return err
+	}
+	if err = index.MoveFiles(indexPath, oldTmp); err != nil {
+		return fmt.Errorf("cannot move old index files: %w", err)
+	}
+
+	// Move the new index file from the temp directory to the index directory.
+	if err = index.MoveFiles(newIndexPath, indexDir); err != nil {
+		return fmt.Errorf("cannot move new index files: %w", err)
+	}
+
+	// Remove the old index files.
+	if err = os.RemoveAll(oldTmp); err != nil {
+		return fmt.Errorf("cannot remove old index files: %w", err)
+	}
+
+	log.Infof("Finished translating index to %d bit prefix", indexSizeBits)
+	return nil
 }
 
 func (s *Store) Start() {
