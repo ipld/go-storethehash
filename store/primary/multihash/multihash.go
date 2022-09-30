@@ -67,6 +67,7 @@ type MultihashPrimary struct {
 	// gc is the garbage collector for the primary.
 	gc      *primaryGC
 	gcMutex sync.Mutex
+	closed  bool
 }
 
 type blockRecord struct {
@@ -400,19 +401,24 @@ func (mp *MultihashPrimary) Sync() error {
 // Close calls Flush to write work and data to the primary file, and then
 // closes the file.
 func (mp *MultihashPrimary) Close() error {
-	mp.fileCache.Clear()
-
 	mp.gcMutex.Lock()
+	if mp.closed {
+		mp.gcMutex.Unlock()
+		return nil
+	}
 	if mp.gc != nil {
 		mp.gc.close()
 	}
 	mp.gcMutex.Unlock()
+
+	mp.fileCache.Clear()
 
 	_, err := mp.Flush()
 	if err != nil {
 		mp.file.Close()
 		return err
 	}
+
 	return mp.file.Close()
 }
 

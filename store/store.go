@@ -135,7 +135,6 @@ func translateIndex(ctx context.Context, indexPath string, primary primary.Prima
 	log.Infof("Translating index to %d bit prefix", indexSizeBits)
 
 	oldFileCache := filecache.New(64)
-	defer oldFileCache.Clear()
 	log.Info("Reading old index")
 	oldIndex, err := index.Open(ctx, indexPath, primary, 0, indexFileSize, 0, 0, oldFileCache)
 	if err != nil {
@@ -152,7 +151,6 @@ func translateIndex(ctx context.Context, indexPath string, primary primary.Prima
 
 	newIndexPath := filepath.Join(indexTmp, filepath.Base(indexPath))
 	newFileCache := filecache.New(64)
-	defer newFileCache.Clear()
 	newIndex, err := index.Open(ctx, newIndexPath, primary, indexSizeBits, indexFileSize, 0, 0, newFileCache)
 	if err != nil {
 		return fmt.Errorf("cannot open new index: %w", err)

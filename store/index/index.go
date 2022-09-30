@@ -117,6 +117,7 @@ type Index struct {
 	length            types.Position
 	basePath          string
 	fileCache         *filecache.FileCache
+	closeOnce         sync.Once
 
 	gcDone     chan struct{}
 	gcResumeAt uint32
@@ -901,22 +902,27 @@ func (idx *Index) Sync() error {
 // Close calls Flush to write work and data to the current index file, and then
 // closes the file.
 func (idx *Index) Close() error {
-	idx.fileCache.Clear()
-	if idx.gcStop != nil {
-		close(idx.gcStop)
-		<-idx.gcDone
-		idx.gcStop = nil
-	}
-	_, err := idx.Flush()
-	if err != nil {
-		idx.file.Close()
-		return err
-	}
-	if err = idx.file.Close(); err != nil {
-		return err
-	}
-	return idx.saveBucketState()
+	var err error
+	idx.closeOnce.Do(func() {
+		idx.fileCache.Clear()
+		if idx.gcStop != nil {
+			close(idx.gcStop)
+			<-idx.gcDone
+			idx.gcStop = nil
+		}
+		_, err = idx.Flush()
+		if err != nil {
+			idx.file.Close()
+			return
+		}
+		if err = idx.file.Close(); err != nil {
+			return
+		}
+		err = idx.saveBucketState()
+	})
+	return err
 }
+
 func (idx *Index) saveBucketState() error {
 	bucketsFileName := savedBucketsName(idx.basePath)
 	bucketsFileNameTemp := bucketsFileName + ".tmp"
