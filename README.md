@@ -26,9 +26,9 @@ When a new key is inserted, the first few bits (24 in this example) will be used
 
 ### Index
 
-The index is an append-only log that maps keys to offsets in the primary storage. Updates are always appended, there are no in-place updates. The index consists of so-called record lists. There is one record list per bucket. Such a list contains all keys that are mapped to one specific bucket.
+The index is an append-only log that maps keys to offsets in the primary storage. Updates are always appended, there are no in-place updates. The index consists of so-called record lists. There is one record list per bucket. Such a list contains all keys that are mapped to one specific bucket. If storethehash is restarted with a different number of index bits that it previously had, the index files are automatically migrated to the new size.
 
-The index is split across multiple files on disk. By default, each of these files may reach a maximum size of approximately 1GiB. When all record lists in an index file are no longer referenced by any file offsets in the Bucket, that index file can be deleted.  These unused index files are removed, in order, by the index garbage collector.  
+The index is split across multiple files on disk. By default, each of these files may reach a maximum size of approximately 1GiB, where the last record in that file must start before the 1GiB limit. The index has garbage collection that truncates deleted records from the end of index files and removes empty index files.
 
 #### Record list
 
@@ -45,6 +45,8 @@ There are various implementations of a primary storage provided.
 - An in-memory storage implementation
 - An implementation that is [CID](https://github.com/multiformats/cid/) aware.
 - An implementation that is [Multihash](https://github.com/multiformats/multihash) aware.
+
+The multihash implementation has garbage collection that allows storage space to be recovered from deleted data.
 
 ### Freelist
 

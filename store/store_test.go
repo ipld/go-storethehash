@@ -280,3 +280,73 @@ func TestRecoverBadKey(t *testing.T) {
 	require.True(t, found)
 	require.Equal(t, value, blks[0].RawData())
 }
+
+func TestTranslate(t *testing.T) {
+	tempDir := t.TempDir()
+
+	indexPath := filepath.Join(tempDir, "storethehash.index")
+	dataPath := filepath.Join(tempDir, "storethehash.data")
+
+	t.Logf("Createing store with 16-bit index")
+	s1, err := store.OpenStore(context.Background(), store.MultihashPrimary, dataPath, indexPath, false, store.IndexBitSize(16), store.GCInterval(0))
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, s1.Close()) })
+
+	// Store blocks.
+	blks := testutil.GenerateBlocksOfSize(5, 100)
+	for i := range blks {
+		err = s1.Put(blks[i].Cid().Hash(), blks[i].RawData())
+		require.NoError(t, err)
+	}
+	// REmove on block.
+	removed, err := s1.Remove(blks[0].Cid().Hash())
+	require.NoError(t, err)
+	require.True(t, removed)
+
+	require.NoError(t, s1.Close())
+
+	// Translate to 26 bits
+	t.Logf("Translating store index from 16-bit to 24-bit")
+	s2, err := store.OpenStore(context.Background(), store.MultihashPrimary, dataPath, indexPath, false, store.IndexBitSize(24), store.GCInterval(0))
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, s2.Close()) })
+
+	// Check that blocks still exist.
+	for i := 1; i < len(blks); i++ {
+		value, found, err := s2.Get(blks[i].Cid().Hash())
+		require.NoError(t, err)
+		require.True(t, found)
+		require.Equal(t, value, blks[i].RawData())
+	}
+
+	// Check that removed block was not found.
+	_, found, err := s2.Get(blks[0].Cid().Hash())
+	require.NoError(t, err)
+	require.False(t, found)
+
+	require.NoError(t, s2.Close())
+
+	// Translate back to 24 bits.
+	t.Logf("Translating store index from 24-bit to 16-bit")
+	s3, err := store.OpenStore(context.Background(), store.MultihashPrimary, dataPath, indexPath, false, store.IndexBitSize(16), store.GCInterval(0))
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, s3.Close()) })
+
+	// Check that blocks still exist.
+	for i := 1; i < len(blks); i++ {
+		value, found, err := s3.Get(blks[i].Cid().Hash())
+		require.NoError(t, err)
+		require.True(t, found)
+		require.Equal(t, value, blks[i].RawData())
+	}
+
+	// Check that removed block was not found.
+	_, found, err = s3.Get(blks[0].Cid().Hash())
+	require.NoError(t, err)
+	require.False(t, found)
+
+	require.NoError(t, s3.Close())
+
+	// Check that double close of store is ok.
+	require.NoError(t, s3.Close())
+}

@@ -113,6 +113,10 @@ func TestIndexPutSingleKey(t *testing.T) {
 	err = i.Close()
 	require.NoError(t, err)
 
+	// Test double close.
+	err = i.Close()
+	require.NoError(t, err)
+
 	// Skip header
 	iter := NewRawIterator(i.basePath, i.fileNum)
 	defer iter.Close()

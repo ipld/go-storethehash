@@ -117,6 +117,7 @@ type Index struct {
 	length            types.Position
 	basePath          string
 	fileCache         *filecache.FileCache
+	closeOnce         sync.Once
 
 	gcDone     chan struct{}
 	gcResumeAt uint32
@@ -130,24 +131,57 @@ type bucketPool map[BucketIndex][]byte
 // no existing index at the specified path. If there is an older version index,
 // then it is automatically upgraded.
 //
-// Specifying 0 for indexSizeBits and maxFileSize results in using their
-// default values. A gcInterval of 0 disables garbage collection.
+// Specifying 0 for indexSizeBits and maxFileSize results in using the values
+// of the existing index, or default values if no index exists. A gcInterval of
+// 0 disables garbage collection.
 func Open(ctx context.Context, path string, primary primary.PrimaryStorage, indexSizeBits uint8, maxFileSize uint32, gcInterval, gcTimeLimit time.Duration, fileCache *filecache.FileCache) (*Index, error) {
 	var file *os.File
-	headerPath := filepath.Clean(path) + ".info"
+	headerPath := headerName(path)
 
-	if indexSizeBits == 0 {
-		indexSizeBits = defaultIndexSizeBits
+	if indexSizeBits != 0 && (indexSizeBits > 31 || indexSizeBits < 8) {
+		return nil, fmt.Errorf("indexSizeBits must be between 8 and 31, default is %d", defaultIndexSizeBits)
 	}
-	if maxFileSize == 0 {
-		maxFileSize = defaultMaxFileSize
-	} else if maxFileSize > defaultMaxFileSize {
+	if maxFileSize > defaultMaxFileSize {
 		return nil, fmt.Errorf("maximum file size cannot exceed %d", defaultMaxFileSize)
 	}
 
-	err := upgradeIndex(ctx, path, headerPath, maxFileSize)
+	upgradeFileSize := maxFileSize
+	if upgradeFileSize == 0 {
+		upgradeFileSize = defaultMaxFileSize
+	}
+	err := upgradeIndex(ctx, path, headerPath, upgradeFileSize)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("could not upgrade index: %w", err)
+	}
+
+	var existingHeader bool
+	header, err := readHeader(headerPath)
+	if err != nil {
+		if !os.IsNotExist(err) {
+			return nil, err
+		}
+		if indexSizeBits == 0 {
+			indexSizeBits = defaultIndexSizeBits
+		}
+		if maxFileSize == 0 {
+			maxFileSize = defaultMaxFileSize
+		}
+		header = newHeader(indexSizeBits, maxFileSize)
+		mp, ok := primary.(*mhprimary.MultihashPrimary)
+		if ok {
+			header.PrimaryFileSize = mp.FileSize()
+		}
+		if err = writeHeader(headerPath, header); err != nil {
+			return nil, err
+		}
+	} else {
+		existingHeader = true
+		if indexSizeBits == 0 {
+			indexSizeBits = header.BucketsBits
+		}
+		if maxFileSize == 0 {
+			maxFileSize = header.MaxFileSize
+		}
 	}
 
 	buckets, err := NewBuckets(indexSizeBits)
@@ -157,17 +191,7 @@ func Open(ctx context.Context, path string, primary primary.PrimaryStorage, inde
 
 	var rmPool bucketPool
 	var lastIndexNum uint32
-	header, err := readHeader(headerPath)
-	if os.IsNotExist(err) {
-		header = newHeader(indexSizeBits, maxFileSize)
-		if err = writeHeader(headerPath, header); err != nil {
-			return nil, err
-		}
-	} else {
-		if err != nil {
-			return nil, err
-		}
-
+	if existingHeader {
 		if header.BucketsBits != indexSizeBits {
 			return nil, types.ErrIndexWrongBitSize{header.BucketsBits, indexSizeBits}
 		}
@@ -878,22 +902,27 @@ func (idx *Index) Sync() error {
 // Close calls Flush to write work and data to the current index file, and then
 // closes the file.
 func (idx *Index) Close() error {
-	idx.fileCache.Clear()
-	if idx.gcStop != nil {
-		close(idx.gcStop)
-		<-idx.gcDone
-		idx.gcStop = nil
-	}
-	_, err := idx.Flush()
-	if err != nil {
-		idx.file.Close()
-		return err
-	}
-	if err = idx.file.Close(); err != nil {
-		return err
-	}
-	return idx.saveBucketState()
+	var err error
+	idx.closeOnce.Do(func() {
+		idx.fileCache.Clear()
+		if idx.gcStop != nil {
+			close(idx.gcStop)
+			<-idx.gcDone
+			idx.gcStop = nil
+		}
+		_, err = idx.Flush()
+		if err != nil {
+			idx.file.Close()
+			return
+		}
+		if err = idx.file.Close(); err != nil {
+			return
+		}
+		err = idx.saveBucketState()
+	})
+	return err
 }
+
 func (idx *Index) saveBucketState() error {
 	bucketsFileName := savedBucketsName(idx.basePath)
 	bucketsFileNameTemp := bucketsFileName + ".tmp"
@@ -1062,7 +1091,7 @@ func (iter *RawIterator) Close() error {
 // On each iteration it returns the position of the record within the index
 // together with the raw record list data.
 type Iterator struct {
-	// bucket is the next bucket to iterate.
+	// bucketIndex is the next bucket to iterate.
 	bucketIndex BucketIndex
 	// index is the Index being iterated.
 	index  *Index
@@ -1073,6 +1102,11 @@ func (idx *Index) NewIterator() *Iterator {
 	return &Iterator{
 		index: idx,
 	}
+}
+
+// Progress returns the percentage of buckets iterated.
+func (iter *Iterator) Progress() float64 {
+	return 100.0 * float64(iter.bucketIndex) / float64(len(iter.index.buckets))
 }
 
 func (iter *Iterator) Next() (Record, bool, error) {
@@ -1396,4 +1430,82 @@ func remapIndex(ctx context.Context, mp *mhprimary.MultihashPrimary, buckets Buc
 
 	log.Infow("Remapped primary offsets", "fileCount", fileCount, "recordCount", recordCount)
 	return rmPool, nil
+}
+
+func headerName(basePath string) string {
+	return filepath.Clean(basePath) + ".info"
+}
+
+type fileIter struct {
+	basePath string
+	fileNum  uint32
+}
+
+func newFileIter(basePath string) (*fileIter, error) {
+	header, err := readHeader(headerName(basePath))
+	if err != nil {
+		return nil, err
+	}
+	return &fileIter{
+		basePath: basePath,
+		fileNum:  header.FirstFile,
+	}, nil
+}
+
+// next returns the name of the next index file. Returns io.EOF if there are no
+// more index files.
+func (fi *fileIter) next() (string, error) {
+	_, err := os.Stat(indexFileName(fi.basePath, fi.fileNum))
+	if err != nil {
+		if os.IsNotExist(err) {
+			err = io.EOF
+		}
+		return "", err
+	}
+	fileName := indexFileName(fi.basePath, fi.fileNum)
+	fi.fileNum++
+
+	return fileName, nil
+}
+
+func MoveFiles(indexPath, newDir string) error {
+	err := os.MkdirAll(newDir, 0755)
+	if err != nil {
+		return err
+	}
+
+	fileIter, err := newFileIter(indexPath)
+	if err != nil {
+		return err
+	}
+	for {
+		fileName, err := fileIter.next()
+		if err != nil {
+			if err == io.EOF {
+				break
+			}
+			return err
+		}
+		newPath := filepath.Join(newDir, filepath.Base(fileName))
+		if err = os.Rename(fileName, newPath); err != nil {
+			return err
+		}
+	}
+
+	headerPath := headerName(indexPath)
+	newPath := filepath.Join(newDir, filepath.Base(headerPath))
+	if err = os.Rename(headerPath, newPath); err != nil {
+		return err
+	}
+
+	bucketsPath := savedBucketsName(indexPath)
+	_, err = os.Stat(bucketsPath)
+	if !os.IsNotExist(err) {
+		newPath = filepath.Join(newDir, filepath.Base(bucketsPath))
+		if err = os.Rename(bucketsPath, newPath); err != nil {
+			return err
+		}
+	}
+
+	return nil
 }

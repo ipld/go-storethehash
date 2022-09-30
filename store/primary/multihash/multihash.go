@@ -67,6 +67,7 @@ type MultihashPrimary struct {
 	// gc is the garbage collector for the primary.
 	gc      *primaryGC
 	gcMutex sync.Mutex
+	closed  bool
 }
 
 type blockRecord struct {
@@ -157,11 +158,15 @@ func Open(path string, freeList *freelist.FreeList, fileCache *filecache.FileCac
 }
 
 func (mp *MultihashPrimary) StartGC(freeList *freelist.FreeList, interval, timeLimit time.Duration, updateIndex UpdateIndexFunc) {
+	if freeList == nil || interval == 0 {
+		return
+	}
+
 	mp.gcMutex.Lock()
 	defer mp.gcMutex.Unlock()
 
-	// If GC already started or no free list, then do nothing.
-	if mp.gc != nil || freeList == nil {
+	// If GC already started, then do nothing.
+	if mp.gc != nil {
 		return
 	}
 
@@ -396,19 +401,24 @@ func (mp *MultihashPrimary) Sync() error {
 // Close calls Flush to write work and data to the primary file, and then
 // closes the file.
 func (mp *MultihashPrimary) Close() error {
-	mp.fileCache.Clear()
-
 	mp.gcMutex.Lock()
+	if mp.closed {
+		mp.gcMutex.Unlock()
+		return nil
+	}
 	if mp.gc != nil {
 		mp.gc.close()
 	}
 	mp.gcMutex.Unlock()
+
+	mp.fileCache.Clear()
 
 	_, err := mp.Flush()
 	if err != nil {
 		mp.file.Close()
 		return err
 	}
+
 	return mp.file.Close()
 }
 
