@@ -26,6 +26,7 @@ type config struct {
 	burstRate       types.Work
 	gcInterval      time.Duration
 	gcTimeLimit     time.Duration
+	syncOnFlush     bool
 }
 
 type Option func(*config)
@@ -94,5 +95,12 @@ func GCInterval(gcInterval time.Duration) Option {
 func GCTimeLimit(gcTimeLimit time.Duration) Option {
 	return func(c *config) {
 		c.gcTimeLimit = gcTimeLimit
+	}
+}
+
+// SyncOnFlush, when set to true, causes fsync to be called as part of Flush.
+func SyncOnFlush(syncOnFlush bool) Option {
+	return func(c *config) {
+		c.syncOnFlush = syncOnFlush
 	}
 }

@@ -50,6 +50,7 @@ type Store struct {
 	flushNow     chan struct{}
 	syncInterval time.Duration
 	immutable    bool
+	syncOnFlush  bool
 }
 
 // OpenStore opens the index and returns a Store with the specified primary type.
@@ -125,6 +126,7 @@ func OpenStore(ctx context.Context, primaryType string, dataPath, indexPath stri
 		closing:      make(chan struct{}),
 		flushNow:     make(chan struct{}, 1),
 		immutable:    immutable,
+		syncOnFlush:  c.syncOnFlush,
 	}
 	return store, nil
 }
@@ -576,15 +578,17 @@ func (s *Store) commit() (types.Work, error) {
 	if err != nil {
 		return 0, err
 	}
-	// finalize disk writes
-	if err = s.index.Primary.Sync(); err != nil {
-		return 0, err
-	}
-	if err = s.index.Sync(); err != nil {
-		return 0, err
-	}
-	if err = s.freelist.Sync(); err != nil {
-		return 0, err
+	if s.syncOnFlush {
+		// finalize disk writes
+		if err = s.index.Primary.Sync(); err != nil {
+			return 0, err
+		}
+		if err = s.index.Sync(); err != nil {
+			return 0, err
+		}
+		if err = s.freelist.Sync(); err != nil {
+			return 0, err
+		}
 	}
 	return primaryWork + indexWork + flWork, nil
 }

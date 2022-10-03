@@ -896,6 +896,8 @@ func (idx *Index) Flush() (types.Work, error) {
 // Sync commits the contents of the current index file to disk. Flush should be
 // called before calling Sync.
 func (idx *Index) Sync() error {
+	idx.flushLock.Lock()
+	defer idx.flushLock.Unlock()
 	return idx.file.Sync()
 }
 

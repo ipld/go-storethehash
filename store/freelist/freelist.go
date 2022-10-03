@@ -110,6 +110,8 @@ func (cp *FreeList) Flush() (types.Work, error) {
 // Sync commits the contents of the freelist file to disk. Flush should be
 // called before calling Sync.
 func (cp *FreeList) Sync() error {
+	cp.flushLock.Lock()
+	defer cp.flushLock.Unlock()
 	return cp.file.Sync()
 }
 

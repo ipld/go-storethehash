@@ -395,6 +395,8 @@ func (cp *MultihashPrimary) Flush() (types.Work, error) {
 // Sync commits the contents of the primary file to disk. Flush should be
 // called before calling Sync.
 func (mp *MultihashPrimary) Sync() error {
+	mp.flushLock.Lock()
+	defer mp.flushLock.Unlock()
 	return mp.file.Sync()
 }
 
