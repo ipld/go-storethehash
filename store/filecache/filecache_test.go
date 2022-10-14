@@ -288,6 +288,7 @@ func TestFuzz(t *testing.T) {
 
 	require.Zero(t, len(fc.removed))
 	fc.Clear()
+	require.Zero(t, fc.Len())
 	require.Zero(t, len(fc.cache))
 	require.Zero(t, len(fc.removed))
 }
@@ -306,6 +307,8 @@ func TestEvict(t *testing.T) {
 		evictions++
 	}
 	fc := NewOpenFile(capacity, os.O_CREATE|os.O_RDWR, 0644)
+	t.Cleanup(func() { fc.Clear() })
+
 	fc.SetOnEvicted(onEvicted)
 
 	tmp := t.TempDir()
