@@ -104,6 +104,22 @@ func (c *FileCache) Close(file *os.File) error {
 	c.lock.Lock()
 	defer c.lock.Unlock()
 
+	// First check if the file is in removed. A different File with the same
+	// name may be in the cache, and would be the wrong one to close.
+	refs, ok := c.removed[file]
+	if ok {
+		if refs == 1 {
+			delete(c.removed, file)
+			if len(c.removed) == 0 {
+				c.removed = nil
+			}
+			return file.Close()
+		}
+		// Removed from cache, but still in use.
+		c.removed[file] = refs - 1
+		return nil
+	}
+
 	if elem, ok := c.cache[name]; ok {
 		ent := elem.Value.(*entry)
 		if ent.refs == 0 {
@@ -112,23 +128,9 @@ func (c *FileCache) Close(file *os.File) error {
 		ent.refs--
 		return nil
 	}
-	// File is no longer in cache, see if it was removed.
-	refs, ok := c.removed[file]
-	if !ok {
-		return file.Close()
-	}
 
-	if refs == 1 {
-		delete(c.removed, file)
-		if len(c.removed) == 0 {
-			c.removed = nil
-		}
-		return file.Close()
-	}
-
-	// Removed from cache, but still in use.
-	c.removed[file] = refs - 1
-	return nil
+	// File is not in removed or in cache, so just close it
+	return file.Close()
 }
 
 // Len return the number of open files in the FileCache.
