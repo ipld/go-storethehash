@@ -554,11 +554,11 @@ func (s *Store) flushTick() {
 		// Trigger flush now, non-blocking.
 		select {
 		case s.flushNow <- struct{}{}:
+			log.Debugw("Work ingress rate exceeded flush rate, waiting for flush", "inRate", inRate, "flushRate", s.flushRate, "elapsed", elapsed, "work", work, "burstRate", s.burstRate)
 		default:
 			// Already signaled, but flush not yet started. No need to wait
 			// since the existing unread signal guarantees the a flush.
 		}
-		log.Infow("Work ingress rate exceeded flush rate, waiting for flush", "inRate", inRate, "flushRate", s.flushRate, "elapsed", elapsed, "work", work, "burstRate", s.burstRate)
 
 		// Wait for next flush to complete.
 		<-flushNotice
