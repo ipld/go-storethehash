@@ -101,7 +101,7 @@ func (gc *primaryGC) run(interval, timeLimit time.Duration) {
 					log.Errorw("GC failed", "err", err)
 					return
 				}
-				log.Infof("GC %s: reclaimed %d bytes", reclaimed)
+				log.Infof("GC reclaimed %d bytes", reclaimed)
 			}(ctx)
 		case <-gcDone:
 			gcDone = nil
