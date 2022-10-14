@@ -307,8 +307,6 @@ func TestEvict(t *testing.T) {
 		evictions++
 	}
 	fc := NewOpenFile(capacity, os.O_CREATE|os.O_RDWR, 0644)
-	t.Cleanup(func() { fc.Clear() })
-
 	fc.SetOnEvicted(onEvicted)
 
 	tmp := t.TempDir()
@@ -335,9 +333,19 @@ func TestEvict(t *testing.T) {
 		require.NoError(t, err, "closing file", file.Name())
 	}
 
-	t.Log("Opening", f2.Name(), "again")
+	t.Log("Closing other handle for", f2.Name())
 	err = fc.Close(f2)
 	require.NoError(t, err, "closing file", f2.Name())
 
 	require.Equal(t, len(names)+1-capacity, evictions)
+	fc.Clear()
+	require.Zero(t, fc.Len())
+	require.Zero(t, len(fc.cache))
+	require.Zero(t, len(fc.removed))
+
+	// Check that all files are really closed.
+	for _, file := range files {
+		require.Error(t, file.Close())
+	}
+	require.Error(t, f2.Close())
 }
