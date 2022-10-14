@@ -3,7 +3,9 @@ package filecache
 import (
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 )
@@ -243,4 +245,96 @@ func TestZeroSize(t *testing.T) {
 	require.Zero(t, len(fc.removed))
 
 	require.Zero(t, fc.Len())
+}
+
+func TestFuzz(t *testing.T) {
+	const (
+		capacity    = 3
+		concurrency = 1000
+		reps        = 100
+		delay       = 500 * time.Microsecond
+	)
+
+	fc := NewOpenFile(capacity, os.O_CREATE|os.O_RDWR, 0644)
+
+	tmp := t.TempDir()
+	fooName := filepath.Join(tmp, "foo")
+	barName := filepath.Join(tmp, "bar")
+	bazName := filepath.Join(tmp, "baz")
+	bifName := filepath.Join(tmp, "bif")
+	names := []string{fooName, barName, bazName, bifName}
+
+	var wg sync.WaitGroup
+	wg.Add(concurrency)
+	for i := 0; i < concurrency; i++ {
+		go func(name string) {
+			for x := 0; x < reps; x++ {
+				f, err := fc.Open(name)
+				require.NoError(t, err, "opening file", name)
+				time.Sleep(delay)
+				err = fc.Close(f)
+				require.NoError(t, err, "closing file", name)
+			}
+			defer wg.Done()
+		}(names[i%len(names)])
+	}
+
+	wg.Wait()
+
+	for name, elem := range fc.cache {
+		ent := elem.Value.(*entry)
+		require.Zero(t, ent.refs, "expected zero ref count for cached file", name)
+	}
+
+	require.Zero(t, len(fc.removed))
+	fc.Clear()
+	require.Zero(t, len(fc.cache))
+	require.Zero(t, len(fc.removed))
+}
+
+func TestEvict(t *testing.T) {
+	// Open a file to get 1st *File, let it be evicted, open that file again to
+	// get 2nd *File, then close both 1st and 2nd *File. This tests that the
+	// first Close closes the evicted *File, not the one in cache.
+	const (
+		capacity = 2
+	)
+
+	var evictions int
+	onEvicted := func(file *os.File, refs int) {
+		t.Logf("Removed %q from cache, refs: %d", filepath.Base(file.Name()), refs)
+		evictions++
+	}
+	fc := NewOpenFile(capacity, os.O_CREATE|os.O_RDWR, 0644)
+	fc.SetOnEvicted(onEvicted)
+
+	tmp := t.TempDir()
+	fooName := filepath.Join(tmp, "foo")
+	barName := filepath.Join(tmp, "bar")
+	bazName := filepath.Join(tmp, "baz")
+	names := []string{fooName, barName, bazName}
+
+	var err error
+	files := make([]*os.File, len(names))
+	for i, name := range names {
+		t.Log("Opening", name)
+		files[i], err = fc.Open(name)
+		require.NoError(t, err, "opening file", name)
+	}
+
+	t.Log("Opening", fooName, "again")
+	f2, err := fc.Open(fooName)
+	require.NoError(t, err, "opening file", fooName)
+
+	for _, file := range files {
+		t.Log("Closing", file.Name())
+		err = fc.Close(file)
+		require.NoError(t, err, "closing file", file.Name())
+	}
+
+	t.Log("Opening", f2.Name(), "again")
+	err = fc.Close(f2)
+	require.NoError(t, err, "closing file", f2.Name())
+
+	require.Equal(t, len(names)+1-capacity, evictions)
 }
