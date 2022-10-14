@@ -69,9 +69,9 @@ func TestGC(t *testing.T) {
 	primaryIface := store.Primary()
 	primary := primaryIface.(*mhprimary.MultihashPrimary)
 
-	fileCount, err := primary.GC(ctx, lowUsePercent)
+	reclaimed, err := primary.GC(ctx, lowUsePercent)
 	require.NoError(t, err)
-	require.Equal(t, 1, fileCount)
+	require.Equal(t, int64(1148), reclaimed)
 
 	// Check that first primary file was deleted.
 	require.NoFileExists(t, primary0)
@@ -80,9 +80,9 @@ func TestGC(t *testing.T) {
 	require.FileExists(t, primary2)
 
 	t.Logf("Running primary GC with not additional removals")
-	fileCount, err = primary.GC(ctx, lowUsePercent)
+	reclaimed, err = primary.GC(ctx, lowUsePercent)
 	require.NoError(t, err)
-	require.Zero(t, fileCount)
+	require.Zero(t, reclaimed)
 
 	// Check that other primary files are still present.
 	require.FileExists(t, primary1)
@@ -99,9 +99,9 @@ func TestGC(t *testing.T) {
 	require.NoError(t, err)
 
 	t.Logf("Running primary GC")
-	fileCount, err = primary.GC(ctx, lowUsePercent)
+	reclaimed, err = primary.GC(ctx, lowUsePercent)
 	require.NoError(t, err)
-	require.Zero(t, fileCount)
+	require.Zero(t, reclaimed)
 
 	// Check that other primary files are present.
 	require.FileExists(t, primary1)
@@ -120,9 +120,9 @@ func TestGC(t *testing.T) {
 	require.NoError(t, err)
 
 	t.Logf("Running primary GC on low-use file to evaporate remaining record")
-	fileCount, err = primary.GC(ctx, lowUsePercent)
+	reclaimed, err = primary.GC(ctx, lowUsePercent)
 	require.NoError(t, err)
-	require.Zero(t, fileCount)
+	require.Zero(t, reclaimed)
 
 	// GC should have relocated record, but not removed old file yet.
 	require.FileExists(t, primary1)
@@ -132,9 +132,9 @@ func TestGC(t *testing.T) {
 	require.NoError(t, err)
 
 	t.Logf("Running primary GC on low-use file to remove file")
-	fileCount, err = primary.GC(ctx, lowUsePercent)
+	reclaimed, err = primary.GC(ctx, lowUsePercent)
 	require.NoError(t, err)
-	require.Equal(t, 1, fileCount)
+	require.Equal(t, int64(1148), reclaimed)
 
 	// GC should have cleaned up evaporated low-use file.
 	require.NoFileExists(t, primary1)

@@ -44,3 +44,7 @@ func (it *Iterator) Next() ([]byte, []byte, error) {
 		return key, value, nil
 	}
 }
+
+func (it *Iterator) Progress() float64 {
+	return it.indexIter.Progress()
+}

@@ -29,6 +29,7 @@ type primaryGC struct {
 	stop        chan struct{}
 	updateIndex UpdateIndexFunc
 	visited     map[uint32]struct{}
+	reclaimed   int64
 }
 
 type UpdateIndexFunc func([]byte, types.Block) error
@@ -77,24 +78,31 @@ func (gc *primaryGC) run(interval, timeLimit time.Duration) {
 			return
 		case <-t.C:
 			gcDone = make(chan struct{})
-			go func() {
+			go func(ctx context.Context) {
 				defer close(gcDone)
 
+				if timeLimit != 0 {
+					var cancel context.CancelFunc
+					ctx, cancel = context.WithTimeout(ctx, timeLimit)
+					defer cancel()
+				}
+
 				log.Infow("GC started")
-				count, err := gc.gc(ctx, timeLimit, defaultLowUsePercent)
-				if err != nil {
-					switch err {
-					case context.DeadlineExceeded:
-						log.Infow("GC stopped at time limit", "limit", timeLimit)
-					case context.Canceled:
-						log.Info("GC canceled")
-					default:
-						log.Errorw("GC failed", "err", err)
-					}
+
+				reclaimed, err := gc.gc(ctx, defaultLowUsePercent)
+				switch err {
+				case nil:
+				case context.DeadlineExceeded:
+					log.Infow("GC stopped at time limit", "limit", timeLimit)
+				case context.Canceled:
+					log.Info("GC canceled")
+					return
+				default:
+					log.Errorw("GC failed", "err", err)
 					return
 				}
-				log.Infow("GC finished", "removedFiles", count)
-			}()
+				log.Infof("GC %s: reclaimed %d bytes", reclaimed)
+			}(ctx)
 		case <-gcDone:
 			gcDone = nil
 			t.Reset(interval)
@@ -102,17 +110,15 @@ func (gc *primaryGC) run(interval, timeLimit time.Duration) {
 	}
 }
 
-// gc searches for and removes stale primary files. Returns the number of unused
-// primary files that were removed.
-func (gc *primaryGC) gc(ctx context.Context, timeLimit time.Duration, lowUsePercent int64) (int, error) {
-	if timeLimit != 0 {
-		var cancel context.CancelFunc
-		ctx, cancel = context.WithTimeout(ctx, timeLimit)
-		defer cancel()
-	}
-
+// gc searches for and removes stale primary files. Returns the number of bytes
+// of storage reclaimed.
+func (gc *primaryGC) gc(ctx context.Context, lowUsePercent int64) (int64, error) {
+	gc.reclaimed = 0
 	affectedSet, err := processFreeList(ctx, gc.freeList, gc.primary.basePath, gc.primary.maxFileSize)
 	if err != nil {
+		if err == context.DeadlineExceeded {
+			return gc.reclaimed, err
+		}
 		return 0, fmt.Errorf("cannot process freelist: %w", err)
 	}
 
@@ -127,7 +133,6 @@ func (gc *primaryGC) gc(ctx context.Context, timeLimit time.Duration, lowUsePerc
 	}
 
 	// GC each unvisited file in order.
-	var delCount int
 	for fileNum := header.FirstFile; fileNum != gc.primary.fileNum; fileNum++ {
 		if _, ok := gc.visited[fileNum]; ok {
 			continue
@@ -137,11 +142,7 @@ func (gc *primaryGC) gc(ctx context.Context, timeLimit time.Duration, lowUsePerc
 
 		dead, err := gc.reapRecords(ctx, fileNum, lowUsePercent)
 		if err != nil {
-			if err == context.DeadlineExceeded {
-				log.Infow("GC stopped at time limit", "limit", timeLimit)
-				return delCount, nil
-			}
-			return 0, err
+			return gc.reclaimed, err
 		}
 
 		if dead && fileNum == header.FirstFile {
@@ -152,14 +153,13 @@ func (gc *primaryGC) gc(ctx context.Context, timeLimit time.Duration, lowUsePerc
 			if err = os.Remove(filePath); err != nil {
 				return 0, fmt.Errorf("cannot remove primary file %s: %w", filePath, err)
 			}
-			log.Infow("Removed stale primary file", "file", filepath.Base(filePath))
-			delCount++
+			log.Debugw("Removed empty primary file", "file", filepath.Base(filePath))
 		}
 
 		gc.visited[fileNum] = struct{}{}
 	}
 
-	return delCount, nil
+	return gc.reclaimed, nil
 }
 
 // reapRecords removes empty records from the end of the file. If the file is
@@ -242,7 +242,7 @@ func (gc *primaryGC) reapRecords(ctx context.Context, fileNum uint32, lowUsePerc
 		pos += sizePrefixSize + int64(size)
 	}
 
-	log.Infow("Merged free primary records", "merged", mergedCount, "file", fileName)
+	log.Debugw("Merged free primary records", "merged", mergedCount, "file", fileName)
 
 	// If updateIndex is not set, then do not truncate files because index
 	// remapping may not have completed yet.
@@ -258,7 +258,8 @@ func (gc *primaryGC) reapRecords(ctx context.Context, fileNum uint32, lowUsePerc
 		if err = file.Truncate(freeAt); err != nil {
 			return false, err
 		}
-		log.Infow("Removed free records from end of primary file", "file", fileName, "at", freeAt, "bytes", freeAtSize)
+		gc.reclaimed += int64(freeAtSize)
+		log.Debugw("Removed free records from end of primary file", "file", fileName, "at", freeAt, "bytes", freeAtSize)
 
 		if freeAt == 0 {
 			// Entire primary is free.
@@ -314,7 +315,7 @@ func (gc *primaryGC) reapRecords(ctx context.Context, fileNum uint32, lowUsePerc
 			if err = gc.updateIndex(indexKey, fileOffset); err != nil {
 				return false, fmt.Errorf("cannot update index with new record location: %w", err)
 			}
-			log.Infow("Moved record from end of low-use file", "from", fileName, "free", totalFree, "busy", totalBusy)
+			log.Debugw("Moved record from end of low-use file", "from", fileName, "free", totalFree, "busy", totalBusy)
 
 			// Do not truncate file here, because moved record may not be
 			// written yet. Instead put moved record onto freelist and let next
@@ -354,7 +355,7 @@ func processFreeList(ctx context.Context, freeList *freelist.FreeList, basePath 
 
 	// If the freelist size is non-zero, then process its records.
 	if fi.Size() != 0 {
-		log.Infof("Applying freelist to primary storage")
+		log.Debugf("Applying freelist to primary storage")
 		affectedSet = make(map[uint32]struct{})
 		startTime := time.Now()
 
@@ -386,7 +387,7 @@ func processFreeList(ctx context.Context, freeList *freelist.FreeList, basePath 
 			count++
 		}
 		flFile.Close()
-		log.Infow("Marked primary records from freelist as deleted", "count", count, "elapsed", time.Since(startTime))
+		log.Debugw("Marked primary records from freelist as deleted", "count", count, "elapsed", time.Since(startTime))
 	}
 
 	if err = os.Remove(flPath); err != nil {

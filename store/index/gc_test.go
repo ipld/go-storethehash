@@ -28,10 +28,10 @@ func TestGC(t *testing.T) {
 	defer idx.Close()
 
 	// All index files in use, so gc should not remove any files.
-	count, freeCount, err := idx.gc(context.Background(), 0, true)
+	reclaimed, emptied, err := idx.gc(context.Background(), true)
 	require.NoError(t, err)
-	require.Zero(t, count)
-	require.Zero(t, freeCount)
+	require.Zero(t, reclaimed)
+	require.Zero(t, emptied)
 
 	require.NoError(t, idx.Close())
 
@@ -51,16 +51,16 @@ func TestGC(t *testing.T) {
 	defer idx.Close()
 
 	// GC should now remove the first 2 files only.
-	count, freeCount, err = idx.gc(context.Background(), 0, true)
+	reclaimed, emptied, err = idx.gc(context.Background(), true)
 	require.NoError(t, err)
-	require.Equal(t, 2, count)
-	require.Equal(t, 2, freeCount)
+	require.Equal(t, int64(2068), reclaimed)
+	require.Equal(t, 2, emptied)
 
 	// Another GC should not remove files.
-	count, freeCount, err = idx.gc(context.Background(), 0, true)
+	reclaimed, emptied, err = idx.gc(context.Background(), true)
 	require.NoError(t, err)
-	require.Zero(t, count)
-	require.Zero(t, freeCount)
+	require.Zero(t, reclaimed)
+	require.Zero(t, emptied)
 
 	// Check that first file is .2 and last file is .24
 	header, err := readHeader(idx.headerPath)
@@ -85,9 +85,9 @@ func TestGC(t *testing.T) {
 	t.Log("File size before truncation:", sizeBefore)
 
 	// Run GC and check that second to last file was truncated by two records.
-	count, _, err = idx.gc(context.Background(), 0, false)
+	reclaimed, _, err = idx.gc(context.Background(), false)
 	require.NoError(t, err)
-	require.Equal(t, count, 0)
+	require.Zero(t, reclaimed)
 
 	fi, err = os.Stat(fileName)
 	require.NoError(t, err)
@@ -124,9 +124,9 @@ func TestGC(t *testing.T) {
 	t.Log("Record size before:", size1Before)
 
 	// Run GC and check that first and second records were merged into one free record.
-	count, _, err = idx.gc(context.Background(), 0, false)
+	reclaimed, _, err = idx.gc(context.Background(), false)
 	require.NoError(t, err)
-	require.Zero(t, count)
+	require.Zero(t, reclaimed)
 
 	fi, err = os.Stat(fileName)
 	require.NoError(t, err)
