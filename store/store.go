@@ -492,22 +492,30 @@ func (s *Store) getPrimaryKeyData(blk types.Block, indexKey []byte) ([]byte, []b
 		// put this offset onto the free list, since it may be an invalid
 		// location in the primary.
 		if _, err = s.index.Remove(indexKey); err != nil {
-			return nil, nil, fmt.Errorf("error removing unusable key: %w", err)
+			return nil, nil, fmt.Errorf("error removing unusable index: %w", err)
 		}
 		return nil, nil, nil
 	}
 
-	// Compare the indexKey with the storedKey read from the primary. This
-	// determines if the indexKey was stored or if some other key with the same
-	// prefix was stored.
+	// Check that the stored key is the correct type.
 	storedKey, err = s.index.Primary.IndexKey(storedKey)
 	if err != nil {
-		return nil, nil, err
+		// The key read from the primary is bad. This means that the data
+		// stored in the primary is bad or the index has an incorrect location.
+		// Either way, the index is unusable, so log the error and delete the
+		// index. It is not safe to put this offset onto the free list, since
+		// it may be an invalid location in the primary.
+		log.Errorw("Bad key stored in primary or bad index, removing index", "err", err)
+		if _, err = s.index.Remove(indexKey); err != nil {
+			return nil, nil, fmt.Errorf("error removing unusable index: %w", err)
+		}
+		return nil, nil, nil
 	}
 
 	// The index stores only prefixes, hence check if the given key fully
 	// matches the key that is stored in the primary storage before returning
-	// the actual value.
+	// the actual value. If given key and stored key do not match, then some
+	// other key that has the same prefix was stored.
 	if !bytes.Equal(indexKey, storedKey) {
 		return nil, nil, nil
 	}
