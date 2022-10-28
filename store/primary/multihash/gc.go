@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"sort"
 	"time"
 
 	logging "github.com/ipfs/go-log/v2"
@@ -341,6 +342,8 @@ func (gc *primaryGC) reapRecords(ctx context.Context, fileNum uint32, lowUsePerc
 // processFreeList reads the freelist and marks the locations in primary files
 // as dead by setting the deleted bit in the record size field.
 func processFreeList(ctx context.Context, freeList *freelist.FreeList, basePath string, maxFileSize uint32) (map[uint32]struct{}, error) {
+	const freeBatchSize = 1024 * 512
+
 	flPath, err := freeList.ToGC()
 	if err != nil {
 		return nil, fmt.Errorf("cannot get freelist gc file: %w", err)
@@ -367,6 +370,8 @@ func processFreeList(ctx context.Context, freeList *freelist.FreeList, basePath 
 
 		var count int
 		flIter := freelist.NewIterator(bufio.NewReader(flFile))
+		freeBatch := make([]*types.Block, 0, freeBatchSize)
+
 		for {
 			free, err := flIter.Next()
 			if err != nil {
@@ -375,19 +380,21 @@ func processFreeList(ctx context.Context, freeList *freelist.FreeList, basePath 
 				}
 				return nil, fmt.Errorf("error reading freelist: %w", err)
 			}
-
-			// Mark dead location with tombstone bit in the record's size data.
-			localPos, fileNum := localizePrimaryPos(free.Offset, maxFileSize)
-			err = deleteRecord(localPos, fileNum, free.Size, basePath)
-			if err != nil {
-				log.Errorw("Cannot mark primary record deleted", "err", err)
-				continue
+			freeBatch = append(freeBatch, free)
+			if len(freeBatch) == cap(freeBatch) {
+				// Mark dead location with tombstone bit in the record's size data.
+				count += deleteRecords(freeBatch, maxFileSize, basePath, affectedSet)
+				freeBatch = freeBatch[:0]
 			}
-			affectedSet[fileNum] = struct{}{}
-			count++
 		}
 		flFile.Close()
-		log.Debugw("Marked primary records from freelist as deleted", "count", count, "elapsed", time.Since(startTime))
+
+		if len(freeBatch) != 0 {
+			count += deleteRecords(freeBatch, maxFileSize, basePath, affectedSet)
+			freeBatch = freeBatch[:0]
+		}
+
+		log.Debugw("Marked primary records from freelist as deleted", "count", count, "elapsed", time.Since(startTime).String())
 	}
 
 	if err = os.Remove(flPath); err != nil {
@@ -397,42 +404,83 @@ func processFreeList(ctx context.Context, freeList *freelist.FreeList, basePath 
 	return affectedSet, nil
 }
 
-func deleteRecord(localPos types.Position, fileNum uint32, size types.Size, basePath string) error {
-	file, err := os.OpenFile(primaryFileName(basePath, fileNum), os.O_RDWR, 0644)
-	if err != nil {
-		return fmt.Errorf("cannot open primary file %s: %w", file.Name(), err)
-	}
-	defer file.Close()
+func deleteRecords(freeBatch []*types.Block, maxFileSize uint32, basePath string, affected map[uint32]struct{}) int {
+	sort.Slice(freeBatch, func(i, j int) bool { return freeBatch[i].Offset < freeBatch[j].Offset })
 
-	fi, err := file.Stat()
-	if err != nil {
-		return fmt.Errorf("cannot stat primary file %s: %w", file.Name(), err)
-	}
-	if localPos > types.Position(fi.Size()) {
-		return fmt.Errorf("freelist record has out-of-range primary offset, offset=%d, fileSize=%d", localPos, fi.Size())
+	var file *os.File
+	var primarySize int64
+	var curFileNum uint32
+	var count, prevCount int
+
+	for _, freeRec := range freeBatch {
+		var err error
+		localPos, fileNum := localizePrimaryPos(freeRec.Offset, maxFileSize)
+		if file == nil || fileNum != curFileNum {
+			if file != nil {
+				// Close the previous file.
+				file.Close()
+				file = nil
+				if count > prevCount {
+					affected[curFileNum] = struct{}{}
+					prevCount = count
+				}
+			}
+
+			file, err = os.OpenFile(primaryFileName(basePath, fileNum), os.O_RDWR, 0644)
+			if err != nil {
+				log.Errorw("Cannot open primary file", "file", file.Name(), "err", err)
+				continue
+			}
+			fi, err := file.Stat()
+			if err != nil {
+				log.Errorw("Cannot stat primary file", "file", file.Name(), "err", err)
+				continue
+			}
+			primarySize = fi.Size()
+			curFileNum = fileNum
+		}
+
+		if int64(localPos) > primarySize {
+			log.Errorw("freelist record has out-of-range primary offset", "offset", localPos, "fileSize", primarySize)
+			continue
+		}
+
+		sizeBuf := make([]byte, sizePrefixSize)
+		if _, err = file.ReadAt(sizeBuf, int64(localPos)); err != nil {
+			log.Errorw("Cannot read primary record", "err", err)
+			continue
+		}
+
+		recSize := binary.LittleEndian.Uint32(sizeBuf)
+		if recSize&deletedBit != 0 {
+			// Already deleted
+			continue
+		}
+
+		if types.Size(recSize) != freeRec.Size {
+			log.Errorw("Record size in primary does not match size in freelist",
+				"recordSize", recSize, "file", file.Name(), "freeSize", freeRec.Size, "pos", localPos)
+			continue
+		}
+
+		// Mark the record as deleted by setting the highest bit in the size. This
+		// assumes that the record size is < 2^31.
+		binary.LittleEndian.PutUint32(sizeBuf, recSize|deletedBit)
+		_, err = file.WriteAt(sizeBuf, int64(localPos))
+		if err != nil {
+			log.Errorw("Cannot write to primary file", "file", file.Name(), "err", err)
+			continue
+		}
+		count++
 	}
 
-	sizeBuf := make([]byte, sizePrefixSize)
-	if _, err = file.ReadAt(sizeBuf, int64(localPos)); err != nil {
-		return err
-	}
-	recSize := binary.LittleEndian.Uint32(sizeBuf)
-	if recSize&deletedBit != 0 {
-		// Already deleted
-		return nil
+	if file != nil {
+		// Close the previous file.
+		file.Close()
+		if count > prevCount {
+			affected[curFileNum] = struct{}{}
+		}
 	}
 
-	if types.Size(recSize) != size {
-		return fmt.Errorf("record size (%d) in primary %s does not match size in freelist (%d), pos=%d", recSize, file.Name(), size, localPos)
-	}
-
-	// Mark the record as deleted by setting the highest bit in the size. This
-	// assumes that the record size is < 2^31.
-	binary.LittleEndian.PutUint32(sizeBuf, recSize|deletedBit)
-	_, err = file.WriteAt(sizeBuf, int64(localPos))
-	if err != nil {
-		return fmt.Errorf("cannot write to primary file %s: %w", file.Name(), err)
-	}
-
-	return nil
+	return count
 }
