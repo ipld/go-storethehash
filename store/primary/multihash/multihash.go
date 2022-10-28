@@ -182,7 +182,7 @@ func (mp *MultihashPrimary) GC(ctx context.Context, lowUsePercent int64) (int64,
 		return 0, errors.New("gc disabled")
 	}
 
-	return gc.gc(ctx, lowUsePercent)
+	return gc.gc(ctx, lowUsePercent, 0)
 }
 
 func (cp *MultihashPrimary) FileSize() uint32 {
