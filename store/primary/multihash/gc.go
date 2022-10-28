@@ -82,15 +82,9 @@ func (gc *primaryGC) run(interval, timeLimit time.Duration) {
 			go func(ctx context.Context) {
 				defer close(gcDone)
 
-				if timeLimit != 0 {
-					var cancel context.CancelFunc
-					ctx, cancel = context.WithTimeout(ctx, timeLimit)
-					defer cancel()
-				}
-
 				log.Infow("GC started")
 
-				reclaimed, err := gc.gc(ctx, defaultLowUsePercent)
+				reclaimed, err := gc.gc(ctx, defaultLowUsePercent, timeLimit)
 				switch err {
 				case nil:
 				case context.DeadlineExceeded:
@@ -113,7 +107,7 @@ func (gc *primaryGC) run(interval, timeLimit time.Duration) {
 
 // gc searches for and removes stale primary files. Returns the number of bytes
 // of storage reclaimed.
-func (gc *primaryGC) gc(ctx context.Context, lowUsePercent int64) (int64, error) {
+func (gc *primaryGC) gc(ctx context.Context, lowUsePercent int64, timeLimit time.Duration) (int64, error) {
 	gc.reclaimed = 0
 	affectedSet, err := processFreeList(ctx, gc.freeList, gc.primary.basePath, gc.primary.maxFileSize)
 	if err != nil {
@@ -131,6 +125,15 @@ func (gc *primaryGC) gc(ctx context.Context, lowUsePercent int64) (int64, error)
 	header, err := readHeader(gc.primary.headerPath)
 	if err != nil {
 		return 0, fmt.Errorf("cannot read primary header: %w", err)
+	}
+
+	// Start the timer only after processing the free list to allow some time
+	// to reclaim storage. Otherwise, GC may only keep trying to keep up with
+	// freelist.
+	if timeLimit != 0 {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, timeLimit)
+		defer cancel()
 	}
 
 	// GC each unvisited file in order.
@@ -385,6 +388,9 @@ func processFreeList(ctx context.Context, freeList *freelist.FreeList, basePath 
 		freeBatch = make([]*types.Block, 0, batchSize)
 
 		for {
+			if ctx.Err() != nil {
+				return nil, ctx.Err()
+			}
 			free, err := flIter.Next()
 			if err != nil {
 				if err == io.EOF {
