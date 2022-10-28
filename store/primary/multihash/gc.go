@@ -397,7 +397,6 @@ func processFreeList(ctx context.Context, freeList *freelist.FreeList, basePath 
 
 		if len(freeBatch) != 0 {
 			count += deleteRecords(freeBatch, maxFileSize, basePath, affectedSet)
-			freeBatch = freeBatch[:0]
 		}
 
 		log.Debugw("Marked primary records from freelist as deleted", "count", count, "elapsed", time.Since(startTime).String())
