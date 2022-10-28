@@ -79,7 +79,7 @@ func TestGC(t *testing.T) {
 	require.FileExists(t, primary1)
 	require.FileExists(t, primary2)
 
-	t.Logf("Running primary GC with not additional removals")
+	t.Logf("Running primary GC with no additional removals")
 	reclaimed, err = primary.GC(ctx, lowUsePercent)
 	require.NoError(t, err)
 	require.Zero(t, reclaimed)
