@@ -314,10 +314,16 @@ func (gc *primaryGC) reapRecords(ctx context.Context, fileNum uint32, lowUsePerc
 			}
 			// Update the index with the new primary location.
 			if err = gc.updateIndex(indexKey, fileOffset); err != nil {
-				return false, fmt.Errorf("cannot update index with new record location: %w", err)
+				log.Errorw("Cannot update index with new record location: %w", err)
+				// Failed to index the moved record, most likely because the
+				// key was not found in the index. The moved record is
+				// unreachable so it must be removed.
+				if err = gc.freeList.Put(fileOffset); err != nil {
+					log.Errorw("Cannot put failed index record location into freelist", "err", err)
+				}
+			} else {
+				log.Debugw("Moved record from end of low-use file", "from", fileName, "free", totalFree, "busy", totalBusy)
 			}
-			log.Debugw("Moved record from end of low-use file", "from", fileName, "free", totalFree, "busy", totalBusy)
-
 			// Do not truncate file here, because moved record may not be
 			// written yet. Instead put moved record onto freelist and let next
 			// GC cycle process freelist and delete this record. This also
