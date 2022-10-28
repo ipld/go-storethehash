@@ -355,6 +355,7 @@ func processFreeList(ctx context.Context, freeList *freelist.FreeList, basePath 
 	}
 
 	var affectedSet map[uint32]struct{}
+	var freeBatch []*types.Block
 
 	// If the freelist size is non-zero, then process its records.
 	if fi.Size() != 0 {
@@ -370,7 +371,12 @@ func processFreeList(ctx context.Context, freeList *freelist.FreeList, basePath 
 
 		var count int
 		flIter := freelist.NewIterator(bufio.NewReader(flFile))
-		freeBatch := make([]*types.Block, 0, freeBatchSize)
+
+		batchSize := fi.Size() / (types.OffBytesLen + types.SizeBytesLen)
+		if batchSize > freeBatchSize {
+			batchSize = freeBatchSize
+		}
+		freeBatch = make([]*types.Block, 0, batchSize)
 
 		for {
 			free, err := flIter.Next()
