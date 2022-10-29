@@ -144,7 +144,7 @@ func (gc *primaryGC) gc(ctx context.Context, lowUsePercent int64, timeLimit time
 
 		filePath := primaryFileName(gc.primary.basePath, fileNum)
 
-		dead, err := gc.reapRecords(ctx, fileNum, lowUsePercent)
+		dead, err := gc.reapRecords(fileNum, lowUsePercent)
 		if err != nil {
 			return gc.reclaimed, err
 		}
@@ -161,6 +161,13 @@ func (gc *primaryGC) gc(ctx context.Context, lowUsePercent int64, timeLimit time
 		}
 
 		gc.visited[fileNum] = struct{}{}
+
+		if ctx.Err() != nil {
+			if err == context.DeadlineExceeded {
+				return gc.reclaimed, err
+			}
+			return 0, ctx.Err()
+		}
 	}
 
 	return gc.reclaimed, nil
@@ -168,7 +175,7 @@ func (gc *primaryGC) gc(ctx context.Context, lowUsePercent int64, timeLimit time
 
 // reapRecords removes empty records from the end of the file. If the file is
 // empty, then returns true to indicate the file can be deleted.
-func (gc *primaryGC) reapRecords(ctx context.Context, fileNum uint32, lowUsePercent int64) (bool, error) {
+func (gc *primaryGC) reapRecords(fileNum uint32, lowUsePercent int64) (bool, error) {
 	file, err := os.OpenFile(primaryFileName(gc.primary.basePath, fileNum), os.O_RDWR, 0644)
 	if err != nil {
 		return false, fmt.Errorf("cannot open primary file: %w", err)
@@ -198,9 +205,6 @@ func (gc *primaryGC) reapRecords(ctx context.Context, fileNum uint32, lowUsePerc
 	sizeBuf := make([]byte, sizePrefixSize)
 	var pos int64
 	for {
-		if ctx.Err() != nil {
-			return false, ctx.Err()
-		}
 		if _, err = file.ReadAt(sizeBuf, pos); err != nil {
 			if err == io.EOF {
 				// Finished reading entire primary.
@@ -284,10 +288,6 @@ func (gc *primaryGC) reapRecords(ctx context.Context, fileNum uint32, lowUsePerc
 		scratch := make([]byte, 1024)
 
 		for busyAt >= 0 {
-			if ctx.Err() != nil {
-				return false, ctx.Err()
-			}
-
 			// Read the record data.
 			if _, err = file.ReadAt(sizeBuf, busyAt); err != nil {
 				return false, fmt.Errorf("cannot read record size: %w", err)
@@ -317,7 +317,7 @@ func (gc *primaryGC) reapRecords(ctx context.Context, fileNum uint32, lowUsePerc
 			}
 			// Update the index with the new primary location.
 			if err = gc.updateIndex(indexKey, fileOffset); err != nil {
-				log.Errorw("Cannot update index with new record location: %w", err)
+				log.Errorw("Cannot update index with new record location", "err", err)
 				// Failed to index the moved record, most likely because the
 				// key was not found in the index. The moved record is
 				// unreachable so it must be removed.
