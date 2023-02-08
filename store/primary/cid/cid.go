@@ -51,7 +51,7 @@ func Open(path string) (*CIDPrimary, error) {
 	if err != nil {
 		return nil, err
 	}
-	length, err := file.Seek(0, os.SEEK_END)
+	length, err := file.Seek(0, io.SeekEnd)
 	if err != nil {
 		return nil, err
 	}

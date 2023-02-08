@@ -21,7 +21,7 @@ func TestParallelism(t *testing.T) {
 		t.Skip()
 	}
 	ctx := context.Background()
-	rand.Seed(time.Now().Unix())
+	rng := rand.New(rand.NewSource(1413))
 	tempDir := t.TempDir()
 	indexPath := filepath.Join(tempDir, "storethehash.index")
 	dataPath := filepath.Join(tempDir, "storethehash.data")
@@ -49,7 +49,7 @@ func TestParallelism(t *testing.T) {
 
 	t.Logf("Finding random blks")
 	for i := 0; i < len(blks)/25; i++ {
-		expectedBlk := blks[rand.Intn(len(blks))]
+		expectedBlk := blks[rng.Intn(len(blks))]
 		blk, err := bs.Get(context.Background(), expectedBlk.Cid())
 		require.NoError(t, err)
 		require.True(t, expectedBlk.Cid().Equals(blk.Cid()))
@@ -70,7 +70,8 @@ func TestParallelism(t *testing.T) {
 	newBlks := testutil.GenerateBlocksOfSize(5000, 100)
 
 	for i := 0; i < 2; i++ {
-		go func(ctx context.Context, wg *sync.WaitGroup) {
+		go func(ctx context.Context, wg *sync.WaitGroup, i int) {
+			rng := rand.New(rand.NewSource(int64(i)))
 			defer wg.Done()
 			for {
 				select {
@@ -80,7 +81,7 @@ func TestParallelism(t *testing.T) {
 				default:
 				}
 				for i := 0; i < 500; i++ {
-					blk := newBlks[rand.Intn(len(newBlks))]
+					blk := newBlks[rng.Intn(len(newBlks))]
 					if err := bs.Put(context.Background(), blk); err != nil && !errors.Is(err, types.ErrKeyExists) {
 						t.Logf("Failed to insert cid %v: %v\n", blk.Cid().String(), err)
 						outputErrors <- err
@@ -88,14 +89,14 @@ func TestParallelism(t *testing.T) {
 					}
 				}
 				t.Logf("Wrote 500 records")
-				time.Sleep(time.Duration(rand.Intn(100)) * time.Millisecond)
-
+				time.Sleep(time.Duration(rng.Intn(100)) * time.Millisecond)
 			}
-		}(ctx, &wg)
+		}(ctx, &wg, i)
 	}
 
 	for i := 0; i < 5; i++ {
-		go func(tx context.Context, wg *sync.WaitGroup) {
+		go func(tx context.Context, wg *sync.WaitGroup, i int) {
+			rng := rand.New(rand.NewSource(int64(i)))
 			defer wg.Done()
 			for {
 				select {
@@ -105,7 +106,7 @@ func TestParallelism(t *testing.T) {
 				default:
 				}
 				for i := 0; i < 500; i++ {
-					expectedBlk := newBlks[rand.Intn(len(newBlks))]
+					expectedBlk := newBlks[rng.Intn(len(newBlks))]
 					_, err := bs.Get(context.Background(), expectedBlk.Cid())
 					if err != nil && !errors.Is(err, ipld.ErrNotFound{}) {
 						t.Logf("Failed to read: %v\n", err)
@@ -114,9 +115,9 @@ func TestParallelism(t *testing.T) {
 					}
 				}
 				t.Logf("Read 500 records")
-				time.Sleep(time.Duration(rand.Intn(100)) * time.Millisecond)
+				time.Sleep(time.Duration(rng.Intn(100)) * time.Millisecond)
 			}
-		}(ctx, &wg)
+		}(ctx, &wg, i)
 	}
 
 	wg.Wait()
