@@ -2,7 +2,6 @@ module github.com/ipld/go-storethehash
 
 go 1.21
 
-
 require (
 	github.com/ipfs/go-block-format v0.0.3
 	github.com/ipfs/go-cid v0.3.2
